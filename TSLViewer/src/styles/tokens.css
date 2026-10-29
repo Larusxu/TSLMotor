@@ -1,0 +1,196 @@
+/* ==========================================================================
+   TSL Viewer · design tokens
+   A dark "instrument" palette: deep neutral surfaces, one electric accent,
+   amber for attention, rose for danger. Never more than one glow per view.
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  /* surfaces */
+  --bg: #08090c;
+  --bg-grad-a: #0b1016;
+  --bg-grad-b: #08090c;
+  --surface: #10141a;
+  --surface-2: #141922;
+  --surface-3: #19202b;
+  --inset: #0a0d12;
+
+  /* hairlines */
+  --line: #232a36;
+  --line-soft: #1a202a;
+  --line-strong: #2e3746;
+
+  /* text */
+  --text: #e8eef7;
+  --text-2: #a3b0c2;
+  --text-3: #6d7b8e;
+  --text-4: #4c5768;
+
+  /* accents */
+  --accent: #2ee6e6;
+  --accent-dim: #17b6bd;
+  --accent-ink: #04282b;
+  --accent-soft: rgba(46, 230, 230, 0.12);
+  --accent-line: rgba(46, 230, 230, 0.34);
+
+  --violet: #a78bfa;
+  --blue: #6ea8fe;
+  --ok: #3ddc84;
+  --ok-soft: rgba(61, 220, 132, 0.12);
+  --warn: #f5b544;
+  --warn-soft: rgba(245, 181, 68, 0.12);
+  --danger: #ff5f6d;
+  --danger-soft: rgba(255, 95, 109, 0.12);
+
+  /* geometry */
+  --r-xs: 6px;
+  --r-sm: 9px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+
+  /* type */
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", Inter, ui-sans-serif, system-ui,
+    -apple-system, "Noto Sans SC", "Microsoft YaHei UI", sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", Inter, ui-sans-serif,
+    system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", "SF Mono", ui-monospace,
+    Consolas, "Liberation Mono", monospace;
+
+  /* elevation */
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 10px 30px -18px rgba(0, 0, 0, 0.9);
+  --shadow-pop: 0 18px 50px -20px rgba(0, 0, 0, 0.95), 0 0 0 1px rgba(255, 255, 255, 0.04);
+
+  /* motion */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --t-fast: 120ms;
+  --t-med: 200ms;
+  --t-slow: 320ms;
+
+  /* raised surfaces (buttons, segmented, chips) */
+  --raise-1: #212a36;
+  --raise-2: #1a212b;
+  --raise-3: #202834;
+  --raise-4: #191f28;
+  --fill-1: rgba(255, 255, 255, 0.04);
+  --fill-2: rgba(255, 255, 255, 0.06);
+  --fill-3: rgba(255, 255, 255, 0.025);
+
+  --btn-accent-a: #37e9e9;
+  --btn-accent-b: #16c3c3;
+  --btn-danger-a: #ff6b78;
+  --btn-danger-b: #e6394a;
+
+  --brand-a: #1b2a33;
+  --brand-b: #0d1216;
+
+  /* oscilloscope / chart screen */
+  --screen-a: #0d1319;
+  --screen-b: #080b0f;
+  --grid: rgba(255, 255, 255, 0.06);
+  --grid-ink: #6d7b8e;
+  /* translucency */
+  --rail-a: rgba(18, 23, 31, 0.94);
+  --rail-b: rgba(10, 13, 18, 0.96);
+  --topbar-bg: rgba(10, 13, 18, 0.78);
+  --legend-bg: rgba(8, 11, 15, 0.6);
+  --toast-bg: rgba(20, 25, 34, 0.96);
+}
+
+/* channel colours used by the scope and status legend */
+:root {
+  --ch-0: #2ee6e6;
+  --ch-1: #f5b544;
+  --ch-2: #a78bfa;
+  --ch-3: #3ddc84;
+  --ch-4: #6ea8fe;
+  --ch-5: #ff8fab;
+  --ch-6: #9ae6b4;
+}
+
+/* ==========================================================================
+   light theme
+   Same geometry, inverted chrome. The oscilloscope stays dark on purpose:
+   a screen inside a bright panel reads better and matches bench instruments.
+   ========================================================================== */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #eef2f7;
+  --bg-grad-a: #e7eef7;
+  --bg-grad-b: #f5f8fb;
+  --surface: #ffffff;
+  --surface-2: #ffffff;
+  --surface-3: #f6f9fc;
+  --inset: #f1f5f9;
+
+  --line: #d9e1ea;
+  --line-soft: #e6ecf3;
+  --line-strong: #c3cddb;
+
+  --text: #131c26;
+  --text-2: #445364;
+  --text-3: #6c7b8d;
+  --text-4: #909daf;
+
+  --accent: #0a97a3;
+  --accent-dim: #0b7c87;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(10, 151, 163, 0.1);
+  --accent-line: rgba(10, 151, 163, 0.32);
+
+  --violet: #7c5cf0;
+  --blue: #2f6fe0;
+  --ok: #128a52;
+  --ok-soft: rgba(18, 138, 82, 0.1);
+  --warn: #a06a12;
+  --warn-soft: rgba(160, 106, 18, 0.12);
+  --danger: #cf3143;
+  --danger-soft: rgba(207, 49, 67, 0.1);
+
+  /* raised surfaces (buttons, segmented, chips) */
+  --raise-1: #ffffff;
+  --raise-2: #f2f6fa;
+  --raise-3: #f7fafd;
+  --raise-4: #e9eff6;
+  --fill-1: rgba(16, 24, 40, 0.04);
+  --fill-2: rgba(16, 24, 40, 0.06);
+  --fill-3: rgba(16, 24, 40, 0.03);
+
+  --btn-accent-a: #12b3be;
+  --btn-accent-b: #0a8f9a;
+  --btn-danger-a: #e5485a;
+  --btn-danger-b: #c62b3d;
+
+  --brand-a: #dff0f4;
+  --brand-b: #f3f7fb;
+
+  --screen-a: #f9fbfd;
+  --screen-b: #eef3f8;
+  --grid: rgba(16, 24, 40, 0.1);
+  --grid-ink: #5b697a;
+  /* translucency */
+  --rail-a: rgba(255, 255, 255, 0.94);
+  --rail-b: rgba(246, 249, 252, 0.96);
+  --topbar-bg: rgba(255, 255, 255, 0.8);
+  --legend-bg: rgba(241, 245, 249, 0.85);
+  --toast-bg: rgba(255, 255, 255, 0.97);
+
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-2: 0 1px 2px rgba(16, 24, 40, 0.05), 0 12px 28px -20px rgba(16, 24, 40, 0.35);
+  --shadow-pop: 0 18px 44px -22px rgba(16, 24, 40, 0.3), 0 0 0 1px rgba(16, 24, 40, 0.06);
+
+  /* chart traces: darker so they keep contrast on a pale card */
+  --ch-0: #0a97a3;
+  --ch-1: #b3760f;
+  --ch-2: #6d4fd8;
+  --ch-3: #128a52;
+  --ch-4: #2f6fe0;
+  --ch-5: #c53f6a;
+  --ch-6: #4c8a5e;
+}
+
+

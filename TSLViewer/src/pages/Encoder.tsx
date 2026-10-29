@@ -1,0 +1,419 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { api } from "../lib/api";
+import { useApp } from "../lib/app-store";
+import { ENCODER_PRESETS, PHI_E_OFFSETS, TESLA_PROFILE } from "../lib/presets";
+import {
+  Badge,
+  Button,
+  Card,
+  Check,
+  Field,
+  HexField,
+  Icon,
+  KV,
+  Notice,
+  NumField,
+  SelectField,
+  Steps,
+} from "../components/ui";
+import { decodeMt6701, hex, mgText, spiHalfPeriod, spiHzFromHalf } from "../lib/units";
+import type { EncoderCfgPayload } from "../lib/types";
+
+function Gauge({ angle, label, sub }: { angle: number; label: string; sub?: string }) {
+  const r = 46;
+  const c = 2 * Math.PI * r;
+  const frac = ((angle % 360) + 360) % 360 / 360;
+  return (
+    <div className="gauge-wrap">
+      <svg width="128" height="128" viewBox="0 0 128 128">
+        <defs>
+          <linearGradient id="gg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#2ee6e6" />
+            <stop offset="100%" stopColor="#6ea8fe" />
+          </linearGradient>
+        </defs>
+        <circle cx="64" cy="64" r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="6" />
+        <circle
+          cx="64"
+          cy="64"
+          r={r}
+          fill="none"
+          stroke="url(#gg)"
+          strokeWidth="6"
+          strokeLinecap="round"
+          strokeDasharray={`${c * frac} ${c}`}
+          transform="rotate(-90 64 64)"
+          style={{ filter: "drop-shadow(0 0 6px rgba(46,230,230,.5))", transition: "stroke-dasharray 160ms linear" }}
+        />
+        <g transform={`rotate(${angle} 64 64)`}>
+          <line x1="64" y1="64" x2="64" y2="26" stroke="#f5b544" strokeWidth="2" strokeLinecap="round" />
+          <circle cx="64" cy="26" r="3" fill="#f5b544" />
+        </g>
+        <circle cx="64" cy="64" r="3.4" fill="#2ee3e3" />
+        <text x="64" y="104" textAnchor="middle" fontSize="15" fontFamily="Cascadia Code, Consolas, monospace" fill="#e8eef7">
+          {angle.toFixed(1)}°
+        </text>
+        <text x="64" y="118" textAnchor="middle" fontSize="8.5" fill="#6d7b8e" letterSpacing="1.6">
+          {label}
+        </text>
+      </svg>
+      {sub && <div className="tiny muted">{sub}</div>}
+    </div>
+  );
+}
+
+export default function EncoderPage() {
+  const app = useApp();
+  const preset0 = ENCODER_PRESETS[0];
+  const [presetId, setPresetId] = useState(preset0.id);
+  const preset = ENCODER_PRESETS.find((p) => p.id === presetId) ?? preset0;
+
+  const [frameBits, setFrameBits] = useState(preset.frameBits);
+  const [spiMode, setSpiMode] = useState(preset.spiMode);
+  const [spiHz, setSpiHz] = useState(preset.spiHz);
+  const [idle, setIdle] = useState(preset.idleCycles);
+  const [mask, setMask] = useState(parseInt(preset.dataMask, 16));
+  const [sendData, setSendData] = useState(parseInt(preset.sendData, 16));
+  const [csnEncN, setCsnEncN] = useState(preset.csnViaEncN);
+  const [cpr, setCpr] = useState(app.cal.cpr);
+  const [poles, setPoles] = useState(app.cal.poles);
+  const [offset, setOffset] = useState(app.cal.poles ? 48000 - 1 : 48000);
+  const [pwmCount, setPwmCount] = useState(app.cal.pwmMaxCount);
+  const [csa, setCsa] = useState(app.cal.csaGain);
+  const [writeVel, setWriteVel] = useState(false);
+  const [velFrq, setVelFrq] = useState(0x000da71e);
+  const [velPer, setVelPer] = useState(0xfff00001);
+  const [confirmWrite, setConfirmWrite] = useState(false);
+  const [motor, setMotor] = useState<string>("");
+  const [live, setLive] = useState<{ raw: number; conv: number; phiE: number; frame?: ReturnType<typeof decodeMt6701> } | null>(null);
+  const [snapshot, setSnapshot] = useState<Record<number, number>>({});
+
+  const applyPreset = (id: string) => {
+    const p = ENCODER_PRESETS.find((x) => x.id === id);
+    if (!p) return;
+    setPresetId(id);
+    setFrameBits(p.frameBits);
+    setSpiMode(p.spiMode);
+    setSpiHz(p.spiHz);
+    setIdle(p.idleCycles);
+    setMask(parseInt(p.dataMask, 16));
+    setSendData(parseInt(p.sendData, 16));
+    setCsnEncN(p.csnViaEncN);
+    setCpr(p.cpr);
+    app.setCal({ cpr: p.cpr });
+  };
+
+  // first mount: sync from the machine constants
+  useEffect(() => {
+    setCpr(app.cal.cpr);
+    setPoles(app.cal.poles);
+    setPwmCount(app.cal.pwmMaxCount);
+    setCsa(app.cal.csaGain);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const readLive = useCallback(async () => {
+    if (!app.connected) return;
+    try {
+      const items = await api.readMany([0x24d, 0x247, 0x251, 0x240, 0x250, 0x242, 0x0c3, 0x103, 0x244, 0x245]);
+      const map: Record<number, number> = {};
+      items.forEach((i) => {
+        if (i.value !== null) map[i.addr] = i.value;
+      });
+      setSnapshot(map);
+      const raw = map[0x24d] ?? 0;
+      const word = raw & 0xffffff;
+      setLive({
+        raw,
+        conv: map[0x247] ?? 0,
+        phiE: (map[0x251] ?? 0) & 0xffff,
+        frame: frameBits > 14 ? decodeMt6701(word) : undefined,
+      });
+    } catch {
+      /* keep last */
+    }
+  }, [app.connected, frameBits]);
+
+  useEffect(() => {
+    void readLive();
+    if (!app.connected) return;
+    const t = window.setInterval(() => void readLive(), 260);
+    return () => window.clearInterval(t);
+  }, [app.connected, readLive]);
+
+  const payload: EncoderCfgPayload = useMemo(
+    () => ({
+      preset: preset.label,
+      frame_bits: frameBits,
+      spi_mode: spiMode,
+      spi_hz: spiHz,
+      idle_cycles: idle,
+      data_mask: mask,
+      send_data: sendData,
+      csn_via_enc_n: csnEncN,
+      cpr,
+      poles,
+      phi_e_offset: offset,
+      pwm_max_count: pwmCount,
+      csa_gain: csa,
+      vel_frq_conf: velFrq,
+      vel_per_conf: velPer,
+      write_velocity_cfg: writeVel,
+    }),
+    [preset.label, frameBits, spiMode, spiHz, idle, mask, sendData, csnEncN, cpr, poles, offset, pwmCount, csa, velFrq, velPer, writeVel]
+  );
+
+  const cprInv = Math.floor((1 << 24) / Math.max(1, cpr));
+  const half = spiHalfPeriod(spiHz);
+  const actualSck = spiHzFromHalf(half);
+  const angleDeg = live ? ((live.raw & (frameBits > 14 ? 0x3fff : 0x3fff)) / 16384) * 360 : 0;
+
+  const checks: [number, string, number | null][] = [
+    [0x240, "CONF_CH_A", 0x07000000 | cprInv],
+    [0x250, "OUTPUT_CONF", 0x00400000 | poles],
+    [0x242, "PHI_E_OFFSET", offset & 0xffff],
+    [0x0c3, "CSA_GAIN", csa],
+    [0x103, "PWM_PERIOD (lo16)", pwmCount],
+  ];
+
+  return (
+    <div className="grid" style={{ gap: 14 }}>
+      <div className="grid flow-2-1">
+        <div className="col-stack">
+        <Card
+          title="编码器参数"
+          sub="MT6701 · SSI"
+          right={<Badge tone="neutral">{preset.label}</Badge>}
+        >
+          <div className="stack" style={{ gap: 12 }}>
+            <div className="row" style={{ gap: 10, alignItems: "flex-end" }}>
+              <Field label="预设" hint="选择后自动填充" style={{ flex: 1 }}>
+                <SelectField
+                  value={presetId}
+                  onChange={applyPreset}
+                  options={ENCODER_PRESETS.map((p) => ({ value: p.id, label: p.label }))}
+                />
+              </Field>
+              <div style={{ flex: 1 }} className="tiny muted">
+                {preset.note}
+              </div>
+            </div>
+
+            <div className="grid cols-4" style={{ gap: 10 }}>
+              <Field label="极对数" hint="PHI_E_MUL_FACTOR">
+                <NumField value={poles} onChange={(v) => { setPoles(v); app.setCal({ poles: v }); }} min={1} max={127} />
+              </Field>
+              <Field label="编码器步数 CPR">
+                <NumField value={cpr} onChange={(v) => { setCpr(v); app.setCal({ cpr: v }); }} min={16} max={1 << 22} />
+              </Field>
+              <Field label="电角度偏置" hint="0x242">
+                <NumField value={offset} onChange={setOffset} min={0} max={65535} />
+              </Field>
+              <Field label="写入已知偏移" hint="遗留表">
+                <SelectField
+                  value={motor}
+                  onChange={(v) => {
+                    setMotor(v);
+                    const row = PHI_E_OFFSETS.find((x) => x.name === v);
+                    if (row) setOffset(row.offset);
+                  }}
+                  options={[
+                    { value: "", label: "— 手动 —" },
+                    ...PHI_E_OFFSETS.map((x) => ({ value: x.name, label: `${x.name} · ${x.offset}` })),
+                  ]}
+                />
+              </Field>
+            </div>
+
+            <div className="grid cols-4" style={{ gap: 10 }}>
+              <Field label="帧长度" hint="SPI_BIT_CNT">
+                <SelectField
+                  value={frameBits}
+                  onChange={setFrameBits}
+                  options={[
+                    { value: 14, label: "14 bit · 角度" },
+                    { value: 24, label: "24 bit · 全帧" },
+                  ]}
+                />
+              </Field>
+              <Field label="SPI 模式" hint="CPOL/CPHA">
+                <SelectField
+                  value={spiMode}
+                  onChange={setSpiMode}
+                  options={[0, 1, 2, 3].map((v) => ({ value: v, label: `模式 ${v}` }))}
+                />
+              </Field>
+              <Field label="SCK 频率" hint={`half=${half} → ${(actualSck / 1e6).toFixed(2)} MHz`}>
+                <NumField value={spiHz} onChange={setSpiHz} min={117_188} max={3_000_000} step={100_000} unit="Hz" />
+              </Field>
+              <Field label="CSN 间隔" hint="SPI_CSH_CNT">
+                <NumField value={idle} onChange={setIdle} min={0} max={255} />
+              </Field>
+            </div>
+
+            <div className="grid cols-4" style={{ gap: 10 }}>
+              <Field label="数据掩码" hint="RESPONSE_2">
+                <HexField value={mask} onChange={setMask} />
+              </Field>
+              <Field label="发送数据" hint="RESPONSE_1">
+                <HexField value={sendData} onChange={setSendData} />
+              </Field>
+              <Field label="PWM MAX_COUNT" hint="fPWM = 120 MHz / n">
+                <NumField value={pwmCount} onChange={(v) => { setPwmCount(v); app.setCal({ pwmMaxCount: v }); }} min={600} max={20000} step={10} />
+              </Field>
+              <Field label="CSA 增益" hint="0=1x · 3=4x">
+                <SelectField
+                  value={csa}
+                  onChange={(v) => { setCsa(v); app.setCal({ csaGain: v }); }}
+                  options={[
+                    { value: 0, label: "1× · 1.68 A" },
+                    { value: 1, label: "2× · 0.84 A" },
+                    { value: 2, label: "3× · 0.56 A" },
+                    { value: 3, label: "4× · 0.42 A" },
+                  ]}
+                />
+              </Field>
+            </div>
+
+            <div className="row-wrap" style={{ gap: 14 }}>
+              <Check checked={csnEncN} onChange={setCsnEncN}>
+                u[7]=1 · CS 走 ENC_N
+              </Check>
+              <Check checked={writeVel} onChange={setWriteVel}>
+                同时写入速度测量配置（0x244 / 0x245）
+              </Check>
+            </div>
+            {writeVel && (
+              <div className="row" style={{ gap: 10 }}>
+                <Field label="0x244 VELOCITY_FRQ_CONF" style={{ flex: 1 }}>
+                  <HexField value={velFrq} onChange={setVelFrq} />
+                </Field>
+                <Field label="0x245 VELOCITY_PER_CONF" style={{ flex: 1 }}>
+                  <HexField value={velPer} onChange={setVelPer} />
+                </Field>
+              </div>
+            )}
+
+            <div className="divider" />
+            <Check checked={confirmWrite} onChange={setConfirmWrite}>
+              确认写入 <b>IO_MATRIX / IO Controller / FEEDBACK</b>（会立即改变换相行为）
+            </Check>
+            <div className="row" style={{ gap: 8 }}>
+              <Button
+                variant="primary"
+                icon={<Icon.Save width={14} height={14} />}
+                disabled={!app.connected || !app.armed || !confirmWrite || app.jobRunning}
+                onClick={() => void app.runJob("encoder", payload)}
+              >
+                写入编码器配置
+              </Button>
+              <Button variant="ghost" disabled={!app.connected} onClick={() => void readLive()}>
+                刷新回读
+              </Button>
+              {!app.armed && <span className="tiny muted">需解锁 ARM</span>}
+            </div>
+          </div>
+        </Card>
+
+        <Card title="配置流程" sub="WRITE SEQUENCE" right={<Badge tone={app.jobRunning ? "accent" : "neutral"} dot={app.jobRunning ? "live" : undefined}>{app.jobRunning ? "执行中" : "空闲"}</Badge>}>
+          <div className="scroll-y" style={{ maxHeight: 300 }}>
+            <Steps steps={app.steps} />
+          </div>
+        </Card>
+
+          <Card title="手册依据" sub="DATASHEET NOTES">
+          <div className="grid cols-2" style={{ gap: 12 }}>
+            <Notice>
+              <b>SPI_ENC 命令</b>（p.114）：`0xF | mode | 请求类型 | CS 间隔 | 位长 | 时钟`。请求类型 10b 表示持续轮询并写入
+              <span className="mono"> FEEDBACK.PHI_EXT_A</span>。
+            </Notice>
+            <Notice>
+              <b>MT6701 SSI</b>（§7.8.2）：24 拍 = D[13:0] + Mg[3:0] + CRC[5:0]，MSB 先出，CLK 上升沿更新、下降沿采样 → SPI 模式 1。
+            </Notice>
+            <Notice>
+              <b>16 位换算</b>（p.180）：<span className="mono">converted = angle × CPR_INV &gt;&gt; 8</span>，CPR_INV = 2^24 / CPR = {cprInv}。
+            </Notice>
+            <Notice tone="warn">
+              <b>CSA 增益</b>：遗留序列会把 0x0C3 写成 0（1×）。本页会写入 {csa}（{csa === 3 ? "4×" : `${csa + 1}×`}），请核对回读。
+            </Notice>
+          </div>
+          <div className="divider" />
+          <div className="tiny muted">
+            Tesla 平台常量：极对数 {TESLA_PROFILE.poles}、CPR {TESLA_PROFILE.cpr}、{TESLA_PROFILE.pwmMaxCount} → 25 kHz、{TESLA_PROFILE.maPerCount} mA/LSB。
+            每台电机的偏移见第 7 节（遗留固件表），最可靠的做法仍是重新对齐。
+          </div>
+        </Card>
+        </div>
+
+        <div className="col-stack">
+          <Card title="角度回读" sub="FEEDBACK · LIVE">
+            <div className="row" style={{ gap: 8 }}>
+              <Gauge angle={angleDeg} label="MECHANICAL" sub={`PHI_EXT_A = 0x${(live?.raw ?? 0).toString(16).toUpperCase().padStart(6, "0")}`} />
+              <Gauge angle={((live?.phiE ?? 0) / 65536) * 360} label="ELECTRICAL" sub={`PHI_E = ${live?.phiE ?? 0}`} />
+            </div>
+            <div className="divider" />
+            <KV
+              rows={[
+                ["PHI_EXT_A 原始", <span key="a" className="mono">{hex(live?.raw ?? 0, 6)}</span>],
+                ["缩放后 16-bit", <span key="b" className="mono">{live?.conv ?? 0}</span>],
+                ["电角度 16-bit", <span key="c" className="mono">{live?.phiE ?? 0}</span>],
+                ["CPR_INV", <span key="d" className="mono">{cprInv}</span>],
+                ["PHI_E_MUL_FACTOR", <span key="e" className="mono">{(snapshot[0x250] ?? 0) & 0xff}</span>],
+              ]}
+            />
+            {frameBits > 14 && live?.frame && (
+              <>
+                <div className="divider" />
+                <KV
+                  rows={[
+                    ["角度 D[13:0]", <span key="a" className="mono">{live.frame.angle}</span>],
+                    ["状态 Mg[3:0]", <span key="b" className="mono">{`0b${live.frame.mg.toString(2).padStart(4, "0")} · ${mgText(live.frame.mg)}`}</span>],
+                    ["CRC-6", <span key="c" className="mono" style={{ color: live.frame.crcOk ? "var(--ok)" : "var(--warn)" }}>{live.frame.crc} {live.frame.crcOk ? "✓" : "?"}</span>],
+                  ]}
+                />
+              </>
+            )}
+            <div className="divider" />
+            <Notice tone={live && live.raw !== 0 ? "ok" : "warn"}>
+              {live && live.raw !== 0
+                ? "已读到角度：用手转一圈，机械角应从 0° 走到 360° 再回 0°。"
+                : "PHI_EXT_A 为 0：检查 SCK/SDO/CSN 接线、u[7] 选择与预置数据。"}
+            </Notice>
+          </Card>
+
+          <Card title="写入校验" sub="EXPECTED vs ACTUAL">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>寄存器</th>
+                  <th>期望</th>
+                  <th>实际</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {checks.map(([addr, name, want]) => {
+                  const got = snapshot[addr];
+                  const ok = got !== undefined && want !== null && (addr === 0x103 ? (got & 0xffff) === want : got === want);
+                  return (
+                    <tr key={addr}>
+                      <td className="mono">
+                        {hex(addr, 3)} <span className="muted tiny">{name}</span>
+                      </td>
+                      <td className="mono">{want === null ? "—" : hex(want)}</td>
+                      <td className="mono">{got === undefined ? "—" : hex(got)}</td>
+                      <td>{ok ? <Badge tone="ok">OK</Badge> : <Badge tone="warn">差异</Badge>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Card>
+
+
+        </div>
+      </div>
+    </div>
+  );
+}
