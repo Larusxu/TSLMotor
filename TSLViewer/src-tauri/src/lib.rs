@@ -10,6 +10,7 @@ mod link;
 mod procs;
 mod proto;
 mod regs;
+mod simport;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

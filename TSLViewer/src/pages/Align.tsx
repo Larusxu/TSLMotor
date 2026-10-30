@@ -79,7 +79,7 @@ export default function AlignPage() {
               <Field label="稳定时间" hint="每点等待">
                 <NumField value={settle} onChange={setSettle} min={100} max={3000} step={50} unit="ms" />
               </Field>
-              <Field label="步进角度">
+              <Field label="步进电角度" hint="电角度">
                 <NumField value={stepDeg} onChange={setStepDeg} min={15} max={180} step={15} unit="°" />
               </Field>
             </div>

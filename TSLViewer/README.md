@@ -41,6 +41,32 @@ npm run app:build    # 生成 Windows 安装包（msi / nsis）
 
 **浏览器模拟模式**：直接 `npm run dev` 打开页面时，检测不到 Tauri 运行时，`src/lib/api.ts` 会切到内置模拟器（虚拟 COM6、CHIP.ID = 0x64600001、正弦转速/电流、可跑完对齐与测试序列）。用于看界面、演示、录屏，**不产生任何串口流量**。侧栏底部"构建 = preview"即为模拟模式。
 
+### 1.2 无硬件：桌面版内置模拟器 `SIM1`
+
+没有板子也能用完整桌面应用：端口下拉的**第一项固定是 `SIM1`（内置模拟器 · 无需硬件）**，选中并连接即可，串口号与波特率随意（模拟器不校验波特率）。
+
+模拟器独立成工程 [`TSLMotor/TSLmoni`](../TSLmoni/README.md)（零依赖 Rust crate + 可独立运行的 CLI），桌面端通过 path 依赖引入，`src-tauri/src/simport.rs` 只做一层 `gateway::Wire` 适配——网关帧（RS485 Modbus-RTU / USB-CAN-A）、TMC 数据报、所有 procs 与 RTMI 走的都是**真实代码路径**。行为对齐 `TSLHand` 固件：
+
+| 项 | 模拟行为 |
+| --- | --- |
+| 主控协议 | `moto/los_moto.c` 的 op 码（WRITE/READ/CLEAR/INFO/POWER/ALL_OFF/KEEPALIVE/OPEN/CLOSE/BOARD/HAND_ID）与错误码（OK/BAD/NOT_READY/IO/OVERFLOW/BUSY） |
+| 节点/N 路 | 16 个 TMC6460 节点，路由表同 `Modbus/los_motor_routes.c`（uart / chip / output / sys / connector），`CHIP.ID = 0x64600001` |
+| 占用与租约 | `MOTO_OPEN` 抢占 owner，5 s 无请求自动 `ALL_OFF`；他人访问返回 `MOTO_BUSY` |
+| 板级快照 | `MOTO_BOARD(start,count)`：`0x08` 起 16 字符固件串 `TSL-SIM FWHOST01`，word 73 为 HandID（可在界面改 HandID 后回读） |
+| 电源 | 4 片 MAX20087 的掩码，`MOTO_INFO` 回读 `config = 16|mask` 与 `diagnostics_live` |
+| RX 缓冲 | 每节点 2048 B 环形缓冲，溢出后 `MOTO_READ` 返回 `MOTO_OVERFLOW`，需 `MOTO_CLEAR` |
+| 电机侧 | 10-bit 寄存器全量读写；速度/位置/力矩模式有简单动力学（位置/速度/电流回读会动），RTMI 帧按 `UART.CONTROL` 采样率与 `RTMI_CH_x` 映射合成 |
+
+注意：模拟器**不做真实 FOC 与电流环物理响应**，阶跃/PID 辨识看到的是合成波形；寄存器读写、电源时序、协议时序与固件一致。
+
+独立使用（不启动上位机）时：
+
+```powershell
+cd TSLMotor\TSLmoni
+cargo run --release --bin tslmoni -- --selftest    # 协议自检
+cargo run --release --bin tslmoni -- --rpc         # 十六进制报文服务器（stdin/stdout）
+```
+
 ---
 
 ## 2. 页面一览

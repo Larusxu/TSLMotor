@@ -1,4 +1,4 @@
-﻿//! Serial link: datagram transactions, RTMI streaming and capture buffers.
+//! Serial link: datagram transactions, RTMI streaming and capture buffers.
 
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -216,23 +216,32 @@ impl Link {
         self.close();
         self.axis.hold(); self.axis.reset_tracking();
         let mut limits=self.axis.limits();limits.enabled=false;let _=self.axis.set_limits(limits);
-        let sp = serialport::new(name, baud)
-            .dtr_on_open(false)
-            .data_bits(serialport::DataBits::Eight)
-            .parity(serialport::Parity::None)
-            .stop_bits(serialport::StopBits::One)
-            .flow_control(serialport::FlowControl::None)
-            .timeout(Duration::from_millis(8))
-            .open()
-            .map_err(|e| LinkError::Io(e.to_string()))?;
-        let mut sp=crate::gateway::Transport::new(sp,mode,motor);
+        let simulated = crate::simport::is_sim_port(name);
+        let mut sp = if simulated {
+            crate::simport::transport(mode, motor)
+        } else {
+            let serial = serialport::new(name, baud)
+                .dtr_on_open(false)
+                .data_bits(serialport::DataBits::Eight)
+                .parity(serialport::Parity::None)
+                .stop_bits(serialport::StopBits::One)
+                .flow_control(serialport::FlowControl::None)
+                .timeout(Duration::from_millis(8))
+                .open()
+                .map_err(|e| LinkError::Io(e.to_string()))?;
+            crate::gateway::Transport::new(serial, mode, motor)
+        };
         if sp.gateway(){sp.call(0,4,&[]).map_err(|e|LinkError::Io(e.to_string()))?; sp.call(motor,8,&[]).map_err(|e|LinkError::Io(e.to_string()))?;}
         *self.port.lock() = Some(Port {
             sp,
             name: name.to_string(),
             baud,
         });
-        self.log("info", "link", format!("已打开 {name} @ {baud} 8N1"));
+        if simulated {
+            self.log("warn", "link", format!("已连接内置模拟器 {name}（无硬件，mode={mode}, M{motor}）"));
+        } else {
+            self.log("info", "link", format!("已打开 {name} @ {baud} 8N1"));
+        }
         Ok(())
     }
 
@@ -864,6 +873,15 @@ pub fn list_ports() -> Vec<PortInfo> {
         }
     }
     out.sort_by(|a, b| natural_cmp(&a.name, &b.name));
+    // The simulator has no hardware behind it, so keep it at the top of the list.
+    out.insert(
+        0,
+        PortInfo {
+            name: crate::simport::PORT_NAME.to_string(),
+            kind: "SIM".to_string(),
+            detail: "内置模拟器 · 无需硬件".to_string(),
+        },
+    );
     out
 }
 

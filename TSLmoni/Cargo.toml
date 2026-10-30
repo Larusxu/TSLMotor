@@ -1,0 +1,22 @@
+[package]
+name = "tslmoni"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "TSLHand main-controller simulator (no hardware required)"
+authors = ["TSL"]
+
+[lib]
+name = "tslmoni"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tslmoni"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

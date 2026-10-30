@@ -18,7 +18,7 @@ pub fn crc(p: &[u8]) -> u16 {
     }
     c
 }
-trait Wire: Read + Write + Send {
+pub trait Wire: Read + Write + Send {
     fn clear(&self, which: ClearBuffer) -> io::Result<()>;
     fn available(&self) -> io::Result<u32>;
 }
@@ -53,8 +53,14 @@ pub struct Transport {
 }
 impl Transport {
     pub fn new(serial: Box<dyn SerialPort>, mode: &str, motor: u8) -> Self {
+        Self::from_wire(Box::new(SerialWire(serial)), mode, motor)
+    }
+
+    /// Build a transport over any wire implementation (used by the built-in
+    /// simulator, which has no serial port behind it).
+    pub fn from_wire(serial: Box<dyn Wire>, mode: &str, motor: u8) -> Self {
         Self {
-            serial: Box::new(SerialWire(serial)),
+            serial,
             mode: mode.into(),
             motor,
             seq: 0,

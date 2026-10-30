@@ -3608,6 +3608,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "tslmoni"
+version = "0.1.0"
+
+[[package]]
 name = "tslviewer"
 version = "0.1.0"
 dependencies = [
@@ -3617,6 +3621,7 @@ dependencies = [
  "serialport",
  "tauri",
  "tauri-build",
+ "tslmoni",
 ]
 
 [[package]]
