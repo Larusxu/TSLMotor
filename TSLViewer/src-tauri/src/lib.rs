@@ -66,7 +66,7 @@ fn connect(state: State<'_, AppState>, port: String, baud: u32, mode: Option<Str
 
 #[tauri::command(async)]
 fn main_control(state: State<'_, AppState>, motor:u8, op:u8, data:Vec<u8>)->Result<Vec<u8>,String> {
-    if ![4,5,6,10].contains(&op) || motor>16 {return Err("Invalid controller operation".into());}
+    if ![4,5,6,10,11].contains(&op) || motor>16 {return Err("Invalid controller operation".into());}
     state.link.gateway_control(motor,op,&data).map_err(|e|e.to_string())
 }
 

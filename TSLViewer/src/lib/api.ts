@@ -130,6 +130,7 @@ const mock = (() => {
   let running = false;
   const regCache = new Map<number, number>();
   const mockPower=[0,0,0,0];
+  let mockHandId=1;
 
   // ---- travel guard simulation -------------------------------------------
   let axisLimits: AxisLimits = { enabled: false, ch: 0, min: 0, max: 65535, action: "loose" };
@@ -393,6 +394,8 @@ const mock = (() => {
     },
     async mainControl(motor: number, op: number, data: number[] = []) {
       const routes = MOCK_ROUTES;
+      if (op===10 && data[0]===73) return [mockHandId>>8,mockHandId&255];
+      if (op===11) {mockHandId=data[0]*256+data[1];return [];}
       if (op===10) return Array.from("SIMULATED firmware").map(c=>c.charCodeAt(0));
       if (op===6) {mockPower.fill(0);return [];}
       const r=routes[motor-1];

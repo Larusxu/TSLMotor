@@ -8,6 +8,7 @@ import { ArmSwitch, Badge, Button, Icon, SelectField, Toasts } from "./component
 import { SettingsDialog } from "./components/Settings";
 
 import MotorEnable from "./components/MotorEnable";
+import HandIdentity from "./components/HandIdentity";
 import Overview from "./pages/Overview";
 import Encoder from "./pages/Encoder";
 import Align from "./pages/Align";
@@ -160,6 +161,7 @@ function Shell() {
         ))}
 
         <div className="rail-foot">
+          <HandIdentity />
           <div className="rail-meta">
             <span>链路</span>
             <b style={{ color: app.connected ? "var(--ok)" : "var(--text-3)" }}>

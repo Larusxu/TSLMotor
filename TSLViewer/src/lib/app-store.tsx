@@ -40,6 +40,9 @@ const DEFAULT_CAL: Cal = {
 };
 
 interface AppCtx {
+  fwVersion: string;
+  handId: number | null;
+  updateHandId: (id: number) => Promise<void>;
   mode: string; setMode: (v:string)=>void; motor:number; setMotor:(v:number)=>void;
   /** CHIP.ID probe state of the selected motor, shown by the top-bar enable pill. */
   motorTmc: "unknown" | "online" | "offline";
@@ -104,6 +107,8 @@ export function useApp(): AppCtx {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const [fwVersion, setFwVersion] = useState("");
+  const [handId, setHandId] = useState<number | null>(null);
   const [mode, setMode] = useState("direct");
   const [motor, setMotorState] = useState(1);
   const [motorTmc, setMotorTmc] = useState<"unknown" | "online" | "offline">("unknown");
@@ -177,11 +182,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const connect = useCallback(async () => {
     setBusy(true);
+    setFwVersion("");setHandId(null);
     try {
       const st = await api.connect(port, mode==="main485" ? 460800 : mode==="maincan" ? 2000000 : baud, mode, motor);
       setStats(st);
       setConnected(st.connected);
       setMotorTmc("unknown");
+      if(st.connected && mode!=="direct") {
+        try {
+          const version=await api.mainControl(0,10,[8,8]);
+          setFwVersion(String.fromCharCode(...version).replace(/\0/g,"").trim());
+          const id=await api.mainControl(0,10,[73,1]);
+          if(id.length!==2 || !(id[0]*256+id[1]))throw new Error("固件未提供有效 HandID");
+          setHandId(id[0]*256+id[1]);
+        } catch(e) {toast("warn",`主控身份读取失败：${String(e)}`);}
+      }
       toast("ok", `已连接 ${port} @ ${st.baud}`);
     } catch (e) {
       toast("error", `连接失败：${String(e)}`);
@@ -190,6 +205,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setBusy(false);
     }
   }, [port, baud, mode, motor, toast]);
+
+  const updateHandId = useCallback(async (id:number) => {
+    if(!connected || mode==="direct" || !Number.isInteger(id) || id<1 || id>65535)
+      throw new Error("HandID 必须是 1～65535 的整数，且需连接主控");
+    await api.mainControl(0,11,[id>>8,id&255]);
+    const data=await api.mainControl(0,10,[73,1]);
+    if(data.length!==2 || data[0]*256+data[1]!==id)throw new Error("HandID 读回不一致");
+    setHandId(id);
+  },[connected,mode]);
 
   const stopStream = useCallback(async () => {
     try {
@@ -210,6 +234,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     setConnected(false);
     setArmed(false);
+    setFwVersion("");setHandId(null);
     setMotorTmc("unknown");
     toast("warn", "已断开连接");
   }, [stopStream, toast]);
@@ -460,6 +485,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [connected, refreshAxis]);
 
   const value: AppCtx = {
+    fwVersion, handId, updateHandId,
     mode, setMode, motor, setMotor,
     motorTmc, enableMotor,
     ports,

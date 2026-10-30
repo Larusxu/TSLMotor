@@ -469,6 +469,24 @@ mod integration {
         eprintln!("FOCUS PASS {mode} {phase} rounds={rounds} elapsed={:?}",start.elapsed());
     }
 
+    #[test]
+    #[ignore = "real controller identity read only; both adapters required"]
+    fn hardware_hand_identity_read() {
+        for (key,mode,baud) in [("MOTO_HW_RS485","main485",460800),("MOTO_HW_CAN","maincan",2000000)] {
+            let serial=serialport::new(std::env::var(key).unwrap(),baud)
+                .timeout(Duration::from_millis(8)).dtr_on_open(false).open().unwrap();
+            let mut t=Transport::new(serial,mode,1);
+            let fw=t.call(0,10,&[8,8]).unwrap();
+            let fw=String::from_utf8(fw).unwrap().trim_matches('\0').to_string();
+            assert_eq!(fw,std::env::var("MOTO_EXPECT_FW").unwrap());
+            let id=t.call(0,10,&[73,1]).unwrap();
+            assert_eq!(id.len(),2);
+            let id=u16::from_be_bytes([id[0],id[1]]);
+            assert_eq!(id,std::env::var("MOTO_EXPECT_HAND_ID").unwrap().parse::<u16>().unwrap());
+            eprintln!("IDENTITY PASS {mode} FW_Version={fw} HandID={id}");
+        }
+    }
+
     /// Uses the exact desktop transport. No motor writes except CHIP.ID read
     /// requests; no power enable, motion, DFU or persistent-memory operations.
     #[test]
