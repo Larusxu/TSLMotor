@@ -17,7 +17,7 @@ import {
   SelectField,
   Steps,
 } from "../components/ui";
-import { decodeMt6701, hex, mgText, spiHalfPeriod, spiHzFromHalf } from "../lib/units";
+import { decodeMt6701, hex, mgText, spiHalfPeriod, spiHzFromHalf, ssiFrameSeconds } from "../lib/units";
 import type { EncoderCfgPayload } from "../lib/types";
 
 function Gauge({ angle, label, sub }: { angle: number; label: string; sub?: string }) {
@@ -171,6 +171,9 @@ export default function EncoderPage() {
   const cprInv = Math.floor((1 << 24) / Math.max(1, cpr));
   const half = spiHalfPeriod(spiHz);
   const actualSck = spiHzFromHalf(half);
+  /** 采样率：一帧 = 帧内 N 个 SCK 周期 + CSN 间隔（同一套 half 计数） */
+  const frameHz = 1 / Math.max(1e-9, ssiFrameSeconds(frameBits, half, idle));
+  const frameRateText = frameHz >= 1e6 ? `${(frameHz / 1e6).toFixed(2)} MHz` : `${(frameHz / 1e3).toFixed(1)} kHz`;
   const angleDeg = live ? ((live.raw & (frameBits > 14 ? 0x3fff : 0x3fff)) / 16384) * 360 : 0;
 
   const checks: [number, string, number | null][] = [
@@ -259,7 +262,7 @@ export default function EncoderPage() {
               <Field label="SCK 频率" hint={`half=${half} → ${(actualSck / 1e6).toFixed(2)} MHz`}>
                 <NumField value={spiHz} onChange={setSpiHz} min={117_188} max={3_000_000} step={100_000} unit="Hz" />
               </Field>
-              <Field label="CSN 间隔" hint="SPI_CSH_CNT">
+              <Field label="CSN 间隔" hint={`≈${frameRateText} 读取率`}>
                 <NumField value={idle} onChange={setIdle} min={0} max={255} />
               </Field>
             </div>

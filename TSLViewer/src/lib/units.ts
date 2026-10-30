@@ -41,6 +41,13 @@ export const spiHzFromHalf = (half: number): number => {
   return 60_000_000 / ((half + 1) * 2);
 };
 
+/**
+ * SSI 一帧的耗时（秒）。帧内 N 个 SCK 周期 = 2N 个 half 周期，
+ * CS 高电平空闲按 half 周期计数（`SPI_CSH_CNT`），两者同一套 60 MHz 时钟。
+ */
+export const ssiFrameSeconds = (frameBits: number, half: number, idle: number): number =>
+  ((half + 1) / 60_000_000) * (2 * frameBits + idle);
+
 export interface PidBits {
   pos_sampling: number;
   vel_shift: number;
