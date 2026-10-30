@@ -4,6 +4,7 @@
 //! renders the events it gets back. That keeps the timing critical paths
 //! (datagram framing, RTMI parsing) away from the JS event loop.
 
+mod gateway;
 mod axis;
 mod link;
 mod procs;
@@ -41,10 +42,12 @@ fn list_ports() -> Vec<PortInfo> {
     link::list_ports()
 }
 
-#[tauri::command]
-fn connect(state: State<'_, AppState>, port: String, baud: u32) -> Result<LinkStats, String> {
-    state.link.open(&port, baud).map_err(|e| e.to_string())?;
-    // probe the chip so a wrong port/baud fails fast and visibly
+#[tauri::command(async)]
+fn connect(state: State<'_, AppState>, port: String, baud: u32, mode: Option<String>, motor: Option<u8>) -> Result<LinkStats, String> {
+    state.link.open(&port, baud, mode.as_deref().unwrap_or("direct"),motor.unwrap_or(1)).map_err(|e| e.to_string())?;
+    // Gateway open already verifies the controller. An unpowered/absent
+    // motor must not trigger native transactions merely by connecting.
+    if mode.as_deref().unwrap_or("direct") == "direct" {
     match state.link.read_reg_retry(regs::CHIP_ID, 2) {
         Ok(id) => {
             state
@@ -57,10 +60,27 @@ fn connect(state: State<'_, AppState>, port: String, baud: u32) -> Result<LinkSt
                 .log("warn", "link", format!("已打开串口，但读取 CHIP.ID 失败: {e}"));
         }
     }
+    }
     Ok(state.link.stats())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+fn main_control(state: State<'_, AppState>, motor:u8, op:u8, data:Vec<u8>)->Result<Vec<u8>,String> {
+    if ![4,5,6,10].contains(&op) || motor>16 {return Err("Invalid controller operation".into());}
+    state.link.gateway_control(motor,op,&data).map_err(|e|e.to_string())
+}
+
+#[tauri::command(async)]
+fn focus_motor(state: State<'_, AppState>, motor: u8) -> Result<(), String> {
+    state.link.focus_motor(motor).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn probe_tmc(state: State<'_, AppState>, motors: Vec<u8>, attempts: u32) -> Result<Vec<link::TmcProbe>, String> {
+    state.link.probe_tmc(&motors, attempts).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
 fn disconnect(state: State<'_, AppState>) -> LinkStats {
     if state.link.is_connected() {
         state.link.emergency_stop();
@@ -69,17 +89,17 @@ fn disconnect(state: State<'_, AppState>) -> LinkStats {
     state.link.stats()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn link_stats(state: State<'_, AppState>) -> LinkStats {
     state.link.stats()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn read_reg(state: State<'_, AppState>, addr: u16) -> Result<u32, String> {
     state.link.read_reg_retry(addr, 3).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn write_reg(state: State<'_, AppState>, addr: u16, value: u32, verify: bool) -> Result<bool, String> {
     if verify {
         state
@@ -102,26 +122,30 @@ struct SnapItem {
     error: Option<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn read_many(state: State<'_, AppState>, addrs: Vec<u16>) -> Vec<SnapItem> {
+    let mut failed = false;
     addrs
         .into_iter()
-        .map(|addr| match state.link.read_reg_retry(addr, 2) {
+        .take(64)
+        .map(|addr| {
+            if failed {return SnapItem {addr,value:None,error:Some("已停止本轮读取：电机无响应".into())};}
+            match state.link.read_reg_retry(addr, 2) {
             Ok(v) => SnapItem {
                 addr,
                 value: Some(v),
                 error: None,
             },
-            Err(e) => SnapItem {
+            Err(e) => {failed=true; SnapItem {
                 addr,
                 value: None,
                 error: Some(e.to_string()),
-            },
-        })
+            }},
+        }})
         .collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn start_rtmi(
     state: State<'_, AppState>,
     channels: Vec<(u8, u16)>,
@@ -134,18 +158,18 @@ fn start_rtmi(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stop_rtmi(state: State<'_, AppState>) -> Result<(), String> {
     state.link.stop_rtmi().map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn emergency_stop(state: State<'_, AppState>) {
     let _ = state.cancel.store(true, Ordering::SeqCst);
     state.link.emergency_stop();
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_velocity(
     state: State<'_, AppState>,
     target_rpm: f64,
@@ -155,7 +179,7 @@ fn set_velocity(
     procs::start_velocity(&state.link, target_rpm, poles, counts_per_rpm).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stop_motion(state: State<'_, AppState>, poles: u32) -> Result<(), String> {
     procs::stop_motion(&state.link, poles).map_err(|e| e.to_string())
 }
@@ -194,7 +218,7 @@ fn axis_set_limits(
     Ok(st)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn axis_jog(
     state: State<'_, AppState>,
     rpm: f64,
@@ -216,7 +240,7 @@ fn axis_jog(
     Ok(state.link.axis().state())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn axis_move(state: State<'_, AppState>, cfg: axis::MoveCfg) -> Result<axis::AxisState, String> {
     let poles = cfg.poles;
     let counts_per_rpm = cfg.cpr / 60.0;
@@ -233,7 +257,7 @@ fn axis_move(state: State<'_, AppState>, cfg: axis::MoveCfg) -> Result<axis::Axi
     Ok(state.link.axis().state())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn axis_hold(state: State<'_, AppState>, poles: u32) -> Result<axis::AxisState, String> {
     state.link.axis().hold();
     procs::stop_motion(&state.link, poles).map_err(|e| e.to_string())?;
@@ -435,6 +459,14 @@ pub fn run() {
         .manage(state)
         .setup(move |app| {
             link.attach(app.handle().clone());
+            // Lease renewal is independent of UI statistics and never queues
+            // behind an in-flight serial transaction.
+            let weak = Arc::downgrade(&link);
+            thread::spawn(move || loop {
+                thread::sleep(std::time::Duration::from_millis(1000));
+                let Some(link) = weak.upgrade() else { break };
+                link.keepalive();
+            });
             let _ = std::fs::create_dir_all(reports_dir());
             if let Some(win) = app.get_webview_window("main") {
                 let d = fit_window(&win);
@@ -444,6 +476,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            main_control,
+            focus_motor,
+            probe_tmc,
             list_ports,
             connect,
             disconnect,

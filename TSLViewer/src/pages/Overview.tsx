@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app-store";
 import { SIGNALS } from "../lib/presets";
 import { Scope } from "../components/Scope";
+import Controller from "../components/Controller";
 import {
   Badge,
   Button,
@@ -46,8 +47,10 @@ export default function Overview() {
   const [picker, setPicker] = useState<number>(0);
   const history = useRef<number[][]>([[], [], [], []]);
 
+  const polling = useRef(false);
   const poll = useCallback(async () => {
-    if (!app.connected) return;
+    if (!app.connected || polling.current) return;
+    polling.current = true;
     try {
       const items = await api.readMany([0x009, 0x083, 0x084, 0x100, 0x101, 0x105, 0x154, 0x153, 0x171]);
       const next: Record<number, number> = {};
@@ -57,15 +60,17 @@ export default function Overview() {
       setRegs(next);
     } catch {
       /* link hiccup: keep the last values */
-    }
+    } finally { polling.current = false; }
   }, [app.connected]);
 
   useEffect(() => {
+    // Controller connection does not imply a powered, responding motor.
+    // Gateway motor telemetry is explicit until an actual motor is commissioned.
+    if (!app.connected || app.mode !== "direct") return;
     void poll();
-    if (!app.connected) return;
     const t = window.setInterval(() => void poll(), 700);
     return () => window.clearInterval(t);
-  }, [app.connected, poll]);
+  }, [app.connected, app.mode, poll]);
 
   // The scope store lives outside React state; tick so the KPI tiles follow it.
   useEffect(() => {
@@ -427,6 +432,8 @@ export default function Overview() {
           ))}
         </div>
       </Card>
+
+      {app.mode !== "direct" && <Controller />}
     </div>
   );
 }

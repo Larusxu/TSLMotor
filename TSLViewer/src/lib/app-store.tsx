@@ -40,6 +40,10 @@ const DEFAULT_CAL: Cal = {
 };
 
 interface AppCtx {
+  mode: string; setMode: (v:string)=>void; motor:number; setMotor:(v:number)=>void;
+  /** CHIP.ID probe state of the selected motor, shown by the top-bar enable pill. */
+  motorTmc: "unknown" | "online" | "offline";
+  enableMotor: () => Promise<void>;
   ports: PortInfo[];
   port: string;
   baud: number;
@@ -100,6 +104,9 @@ export function useApp(): AppCtx {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const [mode, setMode] = useState("direct");
+  const [motor, setMotorState] = useState(1);
+  const [motorTmc, setMotorTmc] = useState<"unknown" | "online" | "offline">("unknown");
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [port, setPort] = useState("COM6");
   const [baud, setBaud] = useState(115200);
@@ -171,17 +178,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const connect = useCallback(async () => {
     setBusy(true);
     try {
-      const st = await api.connect(port, baud);
+      const st = await api.connect(port, mode==="main485" ? 460800 : mode==="maincan" ? 2000000 : baud, mode, motor);
       setStats(st);
       setConnected(st.connected);
-      toast("ok", `已连接 ${port} @ ${baud}`);
+      setMotorTmc("unknown");
+      toast("ok", `已连接 ${port} @ ${st.baud}`);
     } catch (e) {
       toast("error", `连接失败：${String(e)}`);
       setConnected(false);
     } finally {
       setBusy(false);
     }
-  }, [port, baud, toast]);
+  }, [port, baud, mode, motor, toast]);
 
   const stopStream = useCallback(async () => {
     try {
@@ -202,8 +210,60 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     setConnected(false);
     setArmed(false);
+    setMotorTmc("unknown");
     toast("warn", "已断开连接");
   }, [stopStream, toast]);
+
+  /** Gateway keeps one downstream UART focused, so switching motor is a link
+   *  operation, not just local state. Capture stops and the probe resets. */
+  const setMotor = useCallback((v: number) => {
+    if (v === motor) return;
+    if (!connected || mode === "direct") {
+      setMotorState(v);
+      setMotorTmc("unknown");
+      return;
+    }
+    void (async () => {
+      try {
+        await stopStream();
+        await api.focusMotor(v);
+        setMotorState(v);
+        setMotorTmc("unknown");
+        await api.axisState().then(setAxis).catch(() => undefined);
+        toast("warn", `已切到 M${v}：采集已停止，软限位与标定需重新确认`);
+      } catch (e) {
+        toast("error", `切换电机失败：${String(e)}`);
+      }
+    })();
+  }, [motor, connected, mode, stopStream, toast]);
+
+  /** Power the selected motor's logic 5V, then poll CHIP.ID until it answers. */
+  const enableMotor = useCallback(async () => {
+    if (!connected || busy) return;
+    if (!armed) {
+      toast("warn", "请先解锁 ARM 再上电");
+      return;
+    }
+    setBusy(true);
+    setMotorTmc("unknown");
+    try {
+      if (mode !== "direct") await api.mainControl(motor, 5, [1]);
+      const [hit] = await api.probeTmc([motor], 6);
+      if (hit?.online) {
+        setMotorTmc("online");
+        const id = ((hit.chip_id ?? 0) >>> 0).toString(16).toUpperCase().padStart(8, "0");
+        toast("ok", `M${motor} 已使能 · CHIP.ID 0x${id}`);
+      } else {
+        setMotorTmc("offline");
+        toast("error", `M${motor} 上电后读不到 CHIP.ID（轮询 ${hit?.tries ?? 6} 次）`);
+      }
+    } catch (e) {
+      setMotorTmc("offline");
+      toast("error", String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [connected, busy, armed, mode, motor, toast]);
 
   const sampling = useMemo(() => {
     const f = pwmHz(cal.pwmMaxCount);
@@ -376,14 +436,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!connected) return;
+    let pending = false;
     const t = window.setInterval(() => {
+      if (pending) return;
+      pending = true;
       void api
         .stats()
         .then((s) => {
           setStats(s);
           setConnected(s.connected);
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => { pending = false; });
     }, 1000);
     return () => window.clearInterval(t);
   }, [connected]);
@@ -396,6 +460,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [connected, refreshAxis]);
 
   const value: AppCtx = {
+    mode, setMode, motor, setMotor,
+    motorTmc, enableMotor,
     ports,
     port,
     baud,

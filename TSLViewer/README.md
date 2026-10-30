@@ -21,6 +21,16 @@ npm run build        # 类型检查 + 前端产物
 npm run app:build    # 生成 Windows 安装包（msi / nsis）
 ```
 
+### 1.1 一键启动脚本
+
+`scripts\start.bat` 双击即可（等价于 `.\scripts\start.ps1`）：直接运行已构建好的 `src-tauri\target\release\tslviewer.exe`，不编译、不打包、不起前端服务。
+
+```powershell
+.\scripts\start.ps1
+```
+
+程序不存在时会提示先执行 `npm run app:exe`（只构建不打包）；需要重新构建、开发模式或浏览器预览时用上面的 npm 命令。
+
 产物位置：
 
 | 产物 | 路径 |
@@ -158,6 +168,9 @@ TSLViewer/
 │  ├─ src/procs.rs            编码器向导、φ_e 标定、PID 下发、阶跃、序列
 │  ├─ src/lib.rs              Tauri 命令与任务调度
 │  └─ tauri.conf.json         窗口默认 1440×900，最小 1120×700；启动时按显示器自动收敛
+├─ scripts/
+│  ├─ start.ps1 / start.bat   一键启动：直接运行已构建的 tslviewer.exe
+│  └─ test_gateway_ui.py      UI 回归（需 Vite 已启动 + Playwright + Edge）
 └─ dist/                      构建产物
 ```
 
@@ -180,3 +193,11 @@ TSLViewer/
 - MT6701 的 24-bit CRC 只做校验显示，不做纠错；报警位 `Mg[3:0]` 已在编码器页展示但未参与故障矩阵。
 - 电流环自整定只输出建议 PI，不自动闭环辨识 R/L（芯片无内置阻抗测量功能）。
 - 温度读数需外部校准（`0x009` 原始值为 0 表示 NTC 未接）。
+
+## TeslaHand 主控接入（2026-10-30）
+
+现在可选择直连电机板、主控 RS485、主控 USB-CAN-A 三种模式，以及 M1～M16。
+「TeslaHand 主控」卡在运行概览页最底部：固件版本、16 路映射（双栏 M1–M8 / M9–M16，列为主控 UART、逻辑供电、TMC 在线）、逻辑上电/断电与全部断电。
+顶栏电机下拉移到 ARM 右侧并可在连接状态下直接切换，旁边的使能按钮一点即上电并读 `CHIP.ID`：成功变绿「已使能」，失败保持红「未使能」。
+原有操作走选中电机通道，RTMI 在网关模式按2000 B/s预算限流；这不等于16路同时高速采集或实板运动验收。
+详见 [TeslaHand主控连接模式](doc/TeslaHand主控连接模式.md)。

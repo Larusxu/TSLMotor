@@ -7,6 +7,7 @@ import { pwmHz } from "./lib/units";
 import { ArmSwitch, Badge, Button, Icon, SelectField, Toasts } from "./components/ui";
 import { SettingsDialog } from "./components/Settings";
 
+import MotorEnable from "./components/MotorEnable";
 import Overview from "./pages/Overview";
 import Encoder from "./pages/Encoder";
 import Align from "./pages/Align";
@@ -194,7 +195,11 @@ function Shell() {
             {app.connected ? "已连接" : "离线"}
           </Badge>
 
-          <div style={{ width: 128 }}>
+          <div style={{ width: 168 }}>
+            <SelectField label="连接模式" value={app.mode} onChange={app.setMode} disabled={app.connected || app.busy}
+              options={[{value:"direct",label:"直连电机板"},{value:"main485",label:"主控 · RS485"},{value:"maincan",label:"主控 · USB-CAN-A"}]} />
+          </div>
+          <div style={{ width: 116 }}>
             <SelectField
               value={app.port}
               onChange={app.setPort}
@@ -202,12 +207,12 @@ function Shell() {
               disabled={app.connected}
             />
           </div>
-          <div style={{ width: 150 }}>
+          <div style={{ width: 140 }}>
             <SelectField
-              value={app.baud}
+              value={app.mode==="main485"?460800:app.mode==="maincan"?2000000:app.baud}
               onChange={app.setBaud}
               options={baudOptions}
-              disabled={app.connected}
+              disabled={app.connected || app.mode!=="direct"}
             />
           </div>
           <Button
@@ -231,13 +236,27 @@ function Shell() {
           <div style={{ width: 1, height: 22, background: "var(--line)" }} />
 
           <ArmSwitch armed={app.armed} onToggle={app.setArmed} disabled={!app.connected} />
+          {app.mode!=="direct" && (
+            <>
+              <div style={{ width: 86 }}>
+                <SelectField
+                  label="电机"
+                  value={app.motor}
+                  onChange={app.setMotor}
+                  disabled={app.busy}
+                  options={Array.from({ length: 16 }, (_, i) => ({ value: i + 1, label: `M${i + 1}` }))}
+                />
+              </div>
+              <MotorEnable />
+            </>
+          )}
           <Button
             variant="danger"
             icon={<Icon.Stop width={13} height={13} />}
             onClick={() => {
               void api.emergencyStop();
               app.setArmed(false);
-              app.toast("warn", "已急停：PWM 关闭、驱动禁能");
+              app.toast("warn", "已请求急停；请确认运动与供电反馈");
             }}
             title="立即关闭 PWM 与驱动使能"
           >

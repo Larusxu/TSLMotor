@@ -377,16 +377,19 @@ export function SelectField<T extends string | number>({
   options,
   width,
   disabled,
+  label,
 }: {
   value: T;
   onChange: (v: T) => void;
   options: { value: T; label: string }[];
   width?: number | string;
   disabled?: boolean;
+  label?: string;
 }) {
   return (
     <div className="input-wrap" style={{ width, position: "relative" }}>
       <select
+        aria-label={label}
         value={String(value)}
         disabled={disabled}
         onChange={(e) => {

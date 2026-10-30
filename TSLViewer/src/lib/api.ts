@@ -25,6 +25,7 @@ import type {
   SnapItem,
   StepCfgPayload,
   StepResult,
+  TmcProbe,
 } from "./types";
 
 export const HAS_TAURI =
@@ -52,7 +53,10 @@ export async function on<K extends keyof EventMap>(
 
 const real = {
   listPorts: () => invoke<PortInfo[]>("list_ports"),
-  connect: (port: string, baud: number) => invoke<LinkStats>("connect", { port, baud }),
+  connect: (port: string, baud: number, mode = "direct", motor = 1) => invoke<LinkStats>("connect", { port, baud, mode, motor }),
+  mainControl: (motor: number, op: number, data: number[] = []) => invoke<number[]>("main_control", {motor,op,data}),
+  focusMotor: (motor: number) => invoke<void>("focus_motor", { motor }),
+  probeTmc: (motors: number[], attempts = 6) => invoke<TmcProbe[]>("probe_tmc", { motors, attempts }),
   disconnect: () => invoke<LinkStats>("disconnect"),
   stats: () => invoke<LinkStats>("link_stats"),
   readReg: (addr: number) => invoke<number>("read_reg", { addr }),
@@ -107,6 +111,14 @@ class MockBus {
 const mockBus = new MockBus();
 export { mockBus };
 
+/** uart, device index, OUT channel, SYS branch, CN connector — mirrors the firmware DTS. */
+const MOCK_ROUTES = [
+  [11, 1, 3, 32, 26], [7, 1, 1, 22, 22], [6, 0, 1, 21, 20], [5, 0, 3, 14, 19],
+  [4, 0, 2, 13, 18], [2, 0, 4, 11, 16], [17, 2, 4, 44, 32], [16, 2, 2, 43, 31],
+  [3, 2, 1, 12, 17], [15, 2, 3, 42, 30], [14, 3, 2, 41, 29], [10, 3, 4, 31, 25],
+  [8, 3, 1, 23, 23], [9, 3, 3, 24, 24], [13, 1, 2, 34, 28], [12, 1, 4, 33, 27],
+];
+
 const mock = (() => {
   let connected = false;
   let port = "DEMO";
@@ -117,6 +129,7 @@ const mock = (() => {
   let frames = 0;
   let running = false;
   const regCache = new Map<number, number>();
+  const mockPower=[0,0,0,0];
 
   // ---- travel guard simulation -------------------------------------------
   let axisLimits: AxisLimits = { enabled: false, ch: 0, min: 0, max: 65535, action: "loose" };
@@ -369,7 +382,7 @@ const mock = (() => {
         { name: "COM9", kind: "USB", detail: "FTDI FT232R · A50285BI" },
       ];
     },
-    async connect(p: string, b: number): Promise<LinkStats> {
+    async connect(p: string, b: number, _mode = "direct", _motor = 1): Promise<LinkStats> {
       await delay(260);
       connected = true;
       port = p;
@@ -377,6 +390,27 @@ const mock = (() => {
       log("info", "link", `已打开 ${p} @ ${b} 8N1（模拟）`);
       log("info", "link", "CHIP.ID = 0x64600001");
       return stats();
+    },
+    async mainControl(motor: number, op: number, data: number[] = []) {
+      const routes = MOCK_ROUTES;
+      if (op===10) return Array.from("SIMULATED firmware").map(c=>c.charCodeAt(0));
+      if (op===6) {mockPower.fill(0);return [];}
+      const r=routes[motor-1];
+      if (op===4) return motor===0 ? [1,16,1,1] : [...r,1,0,1,mockPower.some(v=>v!==0)?1:0,16|mockPower[r[1]]];
+      if (op===5 && r) {const bit=1<<(r[2]-1);mockPower[r[1]]=data[0]?mockPower[r[1]]|bit:mockPower[r[1]]&~bit;}
+      return [];
+    },
+    async focusMotor(_motor: number): Promise<void> {
+      await delay(40);
+    },
+    async probeTmc(motors: number[], attempts = 6): Promise<TmcProbe[]> {
+      await delay(180);
+      if (!connected) throw new Error("串口未连接");
+      return motors.map((m) => {
+        const r = MOCK_ROUTES[m - 1];
+        const on = !!r && (mockPower[r[1]] & (1 << (r[2] - 1))) !== 0;
+        return { motor: m, online: on, chip_id: on ? 0x64600001 : null, tries: on ? 1 : attempts };
+      });
     },
     async disconnect(): Promise<LinkStats> {
       stopStream();

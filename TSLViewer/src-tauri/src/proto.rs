@@ -135,7 +135,7 @@ impl RtmiParser {
         }
         let mut i = 0usize;
         while self.buf.len() - i >= self.frame_len {
-            if frame_channel(self.buf[i]).is_some() {
+            if frame_channel(self.buf[i]).is_some() && (self.frame_len != 6 || crc8(&self.buf[i..i+5]) == self.buf[i+5]) {
                 let end = i + self.frame_len;
                 match parse_rtmi_frame(&self.buf[i..end]) {
                     Some(frame) => out.push(frame),
@@ -183,7 +183,8 @@ mod tests {
     #[test]
     fn crc8_multibyte_is_deterministic() {
         // sanity: same input -> same output, and single byte round trip is stable
-        assert_eq!(crc8(&[0x52, 0x40]), crc8(&[0x52, 0x40]));
+        assert_eq!(crc8(&[0x52, 0x40]), 0x12);
+        assert_eq!(crc8(&[0x52,0x40,0,0,0x85,0x5c]),0x6a);
         assert_ne!(crc8(&[0x52, 0x40]), crc8(&[0x52, 0x41]));
     }
 

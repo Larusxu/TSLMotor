@@ -1,6 +1,6 @@
 ﻿//! Serial link: datagram transactions, RTMI streaming and capture buffers.
 
-use std::io::{Read, Write};
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -82,8 +82,17 @@ pub struct RtmiBatch {
     pub pts: Vec<[i64; 2]>,
 }
 
+/// One CHIP.ID probe result. `tries` is how many read attempts were spent.
+#[derive(Clone, Serialize)]
+pub struct TmcProbe {
+    pub motor: u8,
+    pub online: bool,
+    pub chip_id: Option<u32>,
+    pub tries: u32,
+}
+
 struct Port {
-    sp: Box<dyn serialport::SerialPort>,
+    sp: crate::gateway::Transport,
     name: String,
     baud: u32,
 }
@@ -202,9 +211,13 @@ impl Link {
         self.log_lines.lock().clear();
     }
 
-    pub fn open(&self, name: &str, baud: u32) -> Result<()> {
+    pub fn open(&self, name: &str, baud: u32, mode: &str, motor: u8) -> Result<()> {
+        if !["direct","main485","maincan"].contains(&mode) || !(1..=16).contains(&motor) {return Err(LinkError::ValueError("Invalid mode/motor".into()));}
         self.close();
+        self.axis.hold(); self.axis.reset_tracking();
+        let mut limits=self.axis.limits();limits.enabled=false;let _=self.axis.set_limits(limits);
         let sp = serialport::new(name, baud)
+            .dtr_on_open(false)
             .data_bits(serialport::DataBits::Eight)
             .parity(serialport::Parity::None)
             .stop_bits(serialport::StopBits::One)
@@ -212,6 +225,8 @@ impl Link {
             .timeout(Duration::from_millis(8))
             .open()
             .map_err(|e| LinkError::Io(e.to_string()))?;
+        let mut sp=crate::gateway::Transport::new(sp,mode,motor);
+        if sp.gateway(){sp.call(0,4,&[]).map_err(|e|LinkError::Io(e.to_string()))?; sp.call(motor,8,&[]).map_err(|e|LinkError::Io(e.to_string()))?;}
         *self.port.lock() = Some(Port {
             sp,
             name: name.to_string(),
@@ -221,11 +236,102 @@ impl Link {
         Ok(())
     }
 
+    pub fn gateway_control(&self, motor:u8, op:u8, data:&[u8])->Result<Vec<u8>> {
+        let mut guard = self.port.try_lock_for(Duration::from_millis(100))
+            .ok_or_else(|| LinkError::Io("通信忙，请等待当前事务结束后重试".into()))?;
+        let p = guard.as_mut().ok_or(LinkError::NotConnected)?;
+        if !p.sp.gateway(){return Err(LinkError::ValueError("Main controller mode required".into()));}
+        p.sp.call(motor,op,data).map_err(|e|LinkError::Io(e.to_string()))
+    }
+
+    /// Point the gateway's forwarded TMC traffic at another motor. The main
+    /// controller keeps answering for one UART at a time, so this is a focus
+    /// switch: downstream buffers of the new motor are flushed on the way in.
+    pub fn focus_motor(&self, motor: u8) -> Result<()> {
+        if !(1..=16).contains(&motor) {
+            return Err(LinkError::ValueError("电机号必须为 1..=16".into()));
+        }
+        if self.running.load(Ordering::SeqCst) {
+            return Err(LinkError::ValueError("请先停止采集再切换电机".into()));
+        }
+        let mut guard = self.port.lock();
+        let p = guard.as_mut().ok_or(LinkError::NotConnected)?;
+        if !p.sp.gateway() || p.sp.motor == motor {
+            return Ok(());
+        }
+        p.sp.call(motor, 8, &[]).map_err(|e| LinkError::Io(e.to_string()))?;
+        p.sp.motor = motor;
+        p.sp
+            .clear(serialport::ClearBuffer::Input)
+            .map_err(|e| LinkError::Io(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Probe CHIP.ID on each motor, retrying `attempts` times per motor so a
+    /// chip that is still booting after logic power-on is not reported offline.
+    /// The original focus is restored before returning.
+    pub fn probe_tmc(&self, motors: &[u8], attempts: u32) -> Result<Vec<TmcProbe>> {
+        if self.running.load(Ordering::SeqCst) {
+            return Err(LinkError::ValueError("请先停止采集再检测 TMC".into()));
+        }
+        let attempts = attempts.clamp(1, 20);
+        let origin = self.with_port(|p| Ok(p.sp.motor))?;
+        let mut out = Vec::with_capacity(motors.len());
+        for &motor in motors {
+            if !(1..=16).contains(&motor) {
+                continue;
+            }
+            let mut chip_id = None;
+            let mut tries = 0;
+            if self.focus_motor(motor).is_ok() {
+                for i in 0..attempts {
+                    tries = i + 1;
+                    match self.read_reg(regs::CHIP_ID) {
+                        Ok(v) => {
+                            chip_id = Some(v);
+                            break;
+                        }
+                        Err(_) => thread::sleep(Duration::from_millis(20)),
+                    }
+                }
+            }
+            out.push(TmcProbe {
+                motor,
+                online: chip_id.is_some(),
+                chip_id,
+                tries,
+            });
+        }
+        let current = self.with_port(|p| Ok(p.sp.motor))?;
+        if current != origin {
+            let _ = self.focus_motor(origin);
+        }
+        self.log(
+            "info",
+            "gateway",
+            format!(
+                "TMC 检测完成：{}/{} 在线",
+                out.iter().filter(|p| p.online).count(),
+                out.len()
+            ),
+        );
+        Ok(out)
+    }
+
     pub fn close(&self) {
         let _ = self.stop_rtmi();
         let mut guard = self.port.lock();
-        if let Some(p) = guard.take() {
+        if let Some(mut p) = guard.take() {
+            if p.sp.gateway(){let _=p.sp.call(0,9,&[]);}
             self.log("info", "link", format!("关闭 {}", p.name));
+        }
+    }
+
+    pub fn keepalive(&self) {
+        if let Some(mut guard) = self.port.try_lock() {
+            if let Some(p) = guard.as_mut() {
+                if p.sp.gateway() { let _ = p.sp.call(0,7,&[]); }
+            }
         }
     }
 
@@ -284,7 +390,7 @@ impl Link {
         let _gate = self.gate();
         thread::sleep(Duration::from_millis(3));
         self.with_port(|p| {
-            let _ = p.sp.clear(serialport::ClearBuffer::Input);
+            p.sp.clear(serialport::ClearBuffer::Input).map_err(|e|LinkError::Io(e.to_string()))?;
             p.sp
                 .write_all(req)
                 .map_err(|e| LinkError::Io(e.to_string()))?;
@@ -320,6 +426,7 @@ impl Link {
     }
 
     pub fn read_reg(&self, addr: u16) -> Result<u32> {
+        if addr>0x3ff {return Err(LinkError::ValueError("寄存器地址必须为 0..0x3FF".into()));}
         let req = proto::read_request(addr);
         let resp = self.transact(&req, 6, 60)?;
         if resp.len() < 6 {
@@ -346,11 +453,16 @@ impl Link {
     /// Fire-and-forget write. The chip only acknowledges writes when
     /// `UART.RTMI_CH_7.CH_7_EN` is set, so callers normally verify by read-back.
     pub fn write_reg(&self, addr: u16, value: u32) -> Result<()> {
+        if addr>0x3ff {return Err(LinkError::ValueError("寄存器地址必须为 0..0x3FF".into()));}
+        if addr==regs::UART_CONTROL && self.with_port(|p|Ok(p.sp.gateway()))? {
+            let current=self.read_reg(regs::UART_CONTROL)?;
+            if (current^value)&0x001fffff!=0 {return Err(LinkError::ValueError("主控模式保留 UART 波特率、正常帧 CRC 和接口配置；请使用 RTMI 控件".into()));}
+        }
         let req = proto::write_request(addr, value);
         let _gate = self.gate();
         thread::sleep(Duration::from_millis(2));
         self.with_port(|p| {
-            let _ = p.sp.clear(serialport::ClearBuffer::Input);
+            p.sp.clear(serialport::ClearBuffer::Input).map_err(|e|LinkError::Io(e.to_string()))?;
             p.sp
                 .write_all(&req)
                 .map_err(|e| LinkError::Io(e.to_string()))?;
@@ -404,6 +516,14 @@ impl Link {
         if channels.is_empty() {
             return Err(LinkError::ValueError("至少选择一个 RTMI 通道".into()));
         }
+        let gateway=self.with_port(|p|Ok(p.sp.gateway()))?;
+        let sampling=if gateway {
+            let pwm=self.pwm_frequency_hz().unwrap_or(25_000.0);
+            let required=(pwm*channels.len()as f64*if crc{6.0}else{5.0}/2000.0).ceil()as u32;
+            if required>256 {return Err(LinkError::ValueError("主控链路 RTMI 限 2000 B/s；请减少采集通道".into()));}
+            let actual=sampling.max(required.saturating_sub(1)as u8);
+            self.log("info","gateway",format!("主控 RTMI sampling={actual}，非硬实时采集"));actual
+        }else{sampling};
         let base = self.read_reg_retry(regs::UART_CONTROL, 3)?;
 
         // channels first, then the global enable
@@ -504,7 +624,11 @@ impl Link {
                                 }
                             }
                         }
-                        Err(_) => 0,
+                        Err(e) => {
+                            if p.sp.gateway(){self.running.store(false,Ordering::SeqCst);let _=p.sp.call(0,6,&[]);
+                                self.log("error","gateway",format!("采集链路失败，停止并请求全部逻辑断电: {e}"));}
+                            0
+                        },
                     },
                     None => 0,
                 }
@@ -616,6 +740,7 @@ impl Link {
         let _ = self.write_reg(regs::FOC_PID_VELOCITY_INTEGRATOR, 0);
         let _ = self.write_reg(regs::FOC_PID_TORQUE_INTEGRATOR, 0);
         let _ = self.write_reg(regs::FOC_PID_FLUX_INTEGRATOR, 0);
+        let _ = self.gateway_control(0,6,&[]);
     }
 
     // ------------------------------------------------------- travel guard
@@ -747,3 +872,4 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let nb: u32 = b.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0);
     na.cmp(&nb).then_with(|| a.cmp(b))
 }
+

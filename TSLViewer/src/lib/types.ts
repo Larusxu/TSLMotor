@@ -31,6 +31,14 @@ export interface RtmiBatch {
   pts: [number, number][];
 }
 
+/** Result of one CHIP.ID probe; `tries` counts read attempts spent. */
+export interface TmcProbe {
+  motor: number;
+  online: boolean;
+  chip_id: number | null;
+  tries: number;
+}
+
 export interface SnapItem {
   addr: number;
   value: number | null;
