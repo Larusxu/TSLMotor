@@ -305,7 +305,7 @@ export function HexField({
   bits = 32,
 }: {
   value: number;
-  onChange: (v: number) => void;
+  onChange?: (v: number) => void;
   width?: number | string;
   disabled?: boolean;
   bits?: 16 | 32;
@@ -322,7 +322,7 @@ export function HexField({
     const clean = raw.trim().replace(/^0x/i, "").replace(/[^0-9a-fA-F]/g, "");
     const n = parseInt(clean, 16);
     if (Number.isFinite(n)) {
-      onChange(bits === 16 ? n & 0xffff : n >>> 0);
+      onChange?.(bits === 16 ? n & 0xffff : n >>> 0);
       setText(fmt(bits === 16 ? n & 0xffff : n >>> 0));
     } else setText(fmt(value));
   };

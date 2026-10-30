@@ -291,7 +291,7 @@ RTMI 每个通道每帧占 5 字节（开 CRC 则 6 字节）。
 | SPI 模式 | CPOL/CPHA | MT6701 固定 **模式 1**（时钟上升沿更新、下降沿采样） |
 | SCK 频率 | half=n → x.xx MHz | 14 bit 预设是 2 MHz（half=14） |
 | CSN 间隔 | SPI_CSH_CNT | 帧间空闲时钟数，14 bit 预设为 16 |
-| 数据掩码 | RESPONSE_2 | 14 bit → `0x00003FFF`；24 bit → `0x00FFFFFF` |
+| 数据掩码 | RESPONSE_2 · 随帧长度 | **只读派生**：14 bit → `0x00003FFF`；24 bit → `0x00FFFFFF`。由「帧长度」自动算出（`2^位长 − 1`），不再手填 |
 | 发送数据 | RESPONSE_1 | 通常 `0x00000000` |
 | PWM MAX_COUNT | fPWM = 120 MHz / n | 4800 → 25 kHz。**改它等于改整个控制环时基**，非必要不要动 |
 | CSA 增益 | 0=1× · 3=4× | Tesla = 3（4×，0.20131 mA/LSB） |

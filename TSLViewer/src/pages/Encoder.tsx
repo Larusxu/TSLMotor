@@ -73,7 +73,6 @@ export default function EncoderPage() {
   const [spiMode, setSpiMode] = useState(preset.spiMode);
   const [spiHz, setSpiHz] = useState(preset.spiHz);
   const [idle, setIdle] = useState(preset.idleCycles);
-  const [mask, setMask] = useState(parseInt(preset.dataMask, 16));
   const [sendData, setSendData] = useState(parseInt(preset.sendData, 16));
   const [csnEncN, setCsnEncN] = useState(preset.csnViaEncN);
   const [cpr, setCpr] = useState(app.cal.cpr);
@@ -91,6 +90,9 @@ export default function EncoderPage() {
   const [live, setLive] = useState<{ raw: number; conv: number; phiE: number; frame?: ReturnType<typeof decodeMt6701> } | null>(null);
   const [snapshot, setSnapshot] = useState<Record<number, number>>({});
 
+  /** 掩码由帧长度唯一决定，不再手工填：只保留本帧读到的位。 */
+  const mask = frameBits > 14 ? 0x00ff_ffff : 0x0000_3fff;
+
   const applyPreset = (id: string) => {
     const p = ENCODER_PRESETS.find((x) => x.id === id);
     if (!p) return;
@@ -99,7 +101,6 @@ export default function EncoderPage() {
     setSpiMode(p.spiMode);
     setSpiHz(p.spiHz);
     setIdle(p.idleCycles);
-    setMask(parseInt(p.dataMask, 16));
     setSendData(parseInt(p.sendData, 16));
     setCsnEncN(p.csnViaEncN);
     setCpr(p.cpr);
@@ -164,7 +165,7 @@ export default function EncoderPage() {
       vel_per_conf: velPer,
       write_velocity_cfg: writeVel,
     }),
-    [preset.label, frameBits, spiMode, spiHz, idle, mask, sendData, csnEncN, cpr, poles, offset, firstCalib, pwmCount, csa, velFrq, velPer, writeVel]
+    [preset.label, frameBits, spiMode, spiHz, idle, sendData, csnEncN, cpr, poles, offset, firstCalib, pwmCount, csa, velFrq, velPer, writeVel]
   );
 
   const cprInv = Math.floor((1 << 24) / Math.max(1, cpr));
@@ -264,8 +265,8 @@ export default function EncoderPage() {
             </div>
 
             <div className="grid cols-4" style={{ gap: 10 }}>
-              <Field label="数据掩码" hint="RESPONSE_2">
-                <HexField value={mask} onChange={setMask} />
+              <Field label="数据掩码" hint="RESPONSE_2 · 随帧长度">
+                <HexField value={mask} disabled />
               </Field>
               <Field label="发送数据" hint="RESPONSE_1">
                 <HexField value={sendData} onChange={setSendData} />

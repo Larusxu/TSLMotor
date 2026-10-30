@@ -15,7 +15,6 @@ export interface EncoderPreset {
   spiMode: number;
   spiHz: number;
   idleCycles: number;
-  dataMask: string;
   sendData: string;
   cpr: number;
   /** CPR_INV = 2^24 / cpr */
@@ -31,7 +30,6 @@ export const ENCODER_PRESETS: EncoderPreset[] = [
     spiMode: 1,
     spiHz: 2_000_000,
     idleCycles: 16,
-    dataMask: "0x00003FFF",
     sendData: "0x00000000",
     cpr: 16_384,
     csnViaEncN: true,
@@ -44,7 +42,6 @@ export const ENCODER_PRESETS: EncoderPreset[] = [
     spiMode: 1,
     spiHz: 2_000_000,
     idleCycles: 48,
-    dataMask: "0x00FFFFFF",
     sendData: "0x00000000",
     cpr: 16_384,
     csnViaEncN: true,
