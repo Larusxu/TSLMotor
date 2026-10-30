@@ -277,15 +277,15 @@ export default function EncoderPage() {
               <Field label="PWM MAX_COUNT" hint="fPWM = 120 MHz / n">
                 <NumField value={pwmCount} onChange={(v) => { setPwmCount(v); app.setCal({ pwmMaxCount: v }); }} min={600} max={20000} step={10} />
               </Field>
-                <Field label="CSA 增益" hint={`0=1x · 3=4x · ${(TESLA_PROFILE.maPerCount * 4 / (csa + 1)).toFixed(3)} mA/LSB`}>
+                <Field label="CSA 增益" hint={`0=1x · 3=4x · ${TESLA_PROFILE.maPerCount.toFixed(3)} mA/LSB`}>
                   <SelectField
                     value={csa}
                     onChange={(v) => { setCsa(v); app.setCal({ csaGain: v }); }}
                     options={[
-                      { value: 0, label: "1× · ±6.60 A" },
-                      { value: 1, label: "2× · ±3.30 A" },
-                      { value: 2, label: "3× · ±2.20 A" },
-                      { value: 3, label: "4× · ±1.65 A" },
+                      { value: 0, label: "1× · 6.60 A" },
+                      { value: 1, label: "2× · 3.30 A" },
+                      { value: 2, label: "3× · 2.20 A" },
+                      { value: 3, label: "4× · 1.65 A" },
                     ]}
                   />
                 </Field>
@@ -353,7 +353,7 @@ export default function EncoderPage() {
               <b>16 位换算</b>（p.180）：<span className="mono">converted = angle × CPR_INV &gt;&gt; 8</span>，CPR_INV = 2^24 / CPR = {cprInv}。
             </Notice>
             <Notice tone="warn">
-              <b>CSA 增益</b>：遗留固件与旧上位机都写 3（4×，0.20131 mA/LSB）。若写成 0（1×），同一电流的读数会缩小 4 倍。本页会写入 {csa}（{csa === 3 ? "4×" : `${csa + 1}×`}），请核对回读。
+              <b>CSA 增益</b>（Table 20/21）：遗留固件与旧上位机都写 3（4×）；<span className="mono">0x0C3</span> 上电默认是 0（1×），且 mA/LSB 恒为 0.20131，改增益只改 ADC 上限（2¹⁵/增益）。本页会写入 {csa}（{csa === 3 ? "4×" : `${csa + 1}×`}），请核对回读。
             </Notice>
           </div>
           <div className="divider" />
