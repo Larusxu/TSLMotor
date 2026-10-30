@@ -85,7 +85,9 @@ export default function EncoderPage() {
   const [velFrq, setVelFrq] = useState(0x000da71e);
   const [velPer, setVelPer] = useState(0xfff00001);
   const [confirmWrite, setConfirmWrite] = useState(false);
-  const [motor, setMotor] = useState<string>("");
+  /** 偏置来源：__calib = 初次标定（本步不写 0x242）；"" = 手动；TMC_xx = 遗留表。 */
+  const [offsetSrc, setOffsetSrc] = useState<string>("__calib");
+  const firstCalib = offsetSrc === "__calib";
   const [live, setLive] = useState<{ raw: number; conv: number; phiE: number; frame?: ReturnType<typeof decodeMt6701> } | null>(null);
   const [snapshot, setSnapshot] = useState<Record<number, number>>({});
 
@@ -155,13 +157,14 @@ export default function EncoderPage() {
       cpr,
       poles,
       phi_e_offset: offset,
+      write_phi_e_offset: !firstCalib,
       pwm_max_count: pwmCount,
       csa_gain: csa,
       vel_frq_conf: velFrq,
       vel_per_conf: velPer,
       write_velocity_cfg: writeVel,
     }),
-    [preset.label, frameBits, spiMode, spiHz, idle, mask, sendData, csnEncN, cpr, poles, offset, pwmCount, csa, velFrq, velPer, writeVel]
+    [preset.label, frameBits, spiMode, spiHz, idle, mask, sendData, csnEncN, cpr, poles, offset, firstCalib, pwmCount, csa, velFrq, velPer, writeVel]
   );
 
   const cprInv = Math.floor((1 << 24) / Math.max(1, cpr));
@@ -172,7 +175,7 @@ export default function EncoderPage() {
   const checks: [number, string, number | null][] = [
     [0x240, "CONF_CH_A", 0x07000000 | cprInv],
     [0x250, "OUTPUT_CONF", 0x00400000 | poles],
-    [0x242, "PHI_E_OFFSET", offset & 0xffff],
+    [0x242, "PHI_E_OFFSET", firstCalib ? null : offset & 0xffff],
     [0x0c3, "CSA_GAIN", csa],
     [0x103, "PWM_PERIOD (lo16)", pwmCount],
   ];
@@ -208,17 +211,25 @@ export default function EncoderPage() {
                 <NumField value={cpr} onChange={(v) => { setCpr(v); app.setCal({ cpr: v }); }} min={16} max={1 << 22} />
               </Field>
               <Field label="电角度偏置" hint="0x242">
-                <NumField value={offset} onChange={setOffset} min={0} max={65535} />
+                <NumField
+                  value={firstCalib ? "" : offset}
+                  onChange={setOffset}
+                  disabled={firstCalib}
+                  placeholder="待对齐"
+                  min={0}
+                  max={65535}
+                />
               </Field>
               <Field label="写入已知偏移" hint="遗留表">
                 <SelectField
-                  value={motor}
+                  value={offsetSrc}
                   onChange={(v) => {
-                    setMotor(v);
+                    setOffsetSrc(v);
                     const row = PHI_E_OFFSETS.find((x) => x.name === v);
                     if (row) setOffset(row.offset);
                   }}
                   options={[
+                    { value: "__calib", label: "初次电角度偏置标定" },
                     { value: "", label: "— 手动 —" },
                     ...PHI_E_OFFSETS.map((x) => ({ value: x.name, label: `${x.name} · ${x.offset}` })),
                   ]}
@@ -276,12 +287,15 @@ export default function EncoderPage() {
               </Field>
             </div>
 
-            <div className="row-wrap" style={{ gap: 14 }}>
+            <div className="row" style={{ gap: 14, flexWrap: "nowrap", whiteSpace: "nowrap" }}>
               <Check checked={csnEncN} onChange={setCsnEncN}>
                 u[7]=1 · CS 走 ENC_N
               </Check>
               <Check checked={writeVel} onChange={setWriteVel}>
-                同时写入速度测量配置（0x244 / 0x245）
+                同时写入速度测量配置（0x244/0x245）
+              </Check>
+              <Check checked={firstCalib} onChange={(v) => setOffsetSrc(v ? "__calib" : "")}>
+                初次电角度偏置标定 0x242
               </Check>
             </div>
             {writeVel && (
@@ -395,15 +409,24 @@ export default function EncoderPage() {
               <tbody>
                 {checks.map(([addr, name, want]) => {
                   const got = snapshot[addr];
+                  const pending = want === null;
                   const ok = got !== undefined && want !== null && (addr === 0x103 ? (got & 0xffff) === want : got === want);
                   return (
                     <tr key={addr}>
                       <td className="mono">
                         {hex(addr, 3)} <span className="muted tiny">{name}</span>
                       </td>
-                      <td className="mono">{want === null ? "—" : hex(want)}</td>
+                      <td className="mono">{pending ? "—" : hex(want)}</td>
                       <td className="mono">{got === undefined ? "—" : hex(got)}</td>
-                      <td>{ok ? <Badge tone="ok">OK</Badge> : <Badge tone="warn">差异</Badge>}</td>
+                      <td>
+                        {pending ? (
+                          <Badge tone="neutral">待对齐</Badge>
+                        ) : ok ? (
+                          <Badge tone="ok">OK</Badge>
+                        ) : (
+                          <Badge tone="warn">差异</Badge>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}

@@ -116,6 +116,10 @@ pub struct EncoderCfg {
     pub cpr: u32,
     pub poles: u32,
     pub phi_e_offset: u32,
+    /// Write `0x242` as part of this job. Only when replaying a known-good
+    /// board (legacy table); a new motor must get its offset from alignment.
+    #[serde(default)]
+    pub write_phi_e_offset: bool,
     pub pwm_max_count: u32,
     pub csa_gain: u32,
     /// Optional velocity-meter configuration (0 = leave untouched / same as legacy).
@@ -138,6 +142,7 @@ impl Default for EncoderCfg {
             cpr: 16_384,
             poles: 1,
             phi_e_offset: 48_000,
+            write_phi_e_offset: false,
             pwm_max_count: 4800,
             csa_gain: 3,
             vel_frq_conf: 0,
@@ -275,14 +280,21 @@ pub fn setup_encoder(ctx: &mut Ctx, cfg: &EncoderCfg) -> Result<String> {
         format!("PHI_E_MUL_FACTOR={} (极对数), 周期测速", cfg.poles),
     );
 
-    // 8. electrical angle offset
+    // 8. electrical angle offset — a new motor must not inherit a stale value
     let label = "电角度偏移 (0x242)";
     ctx.begin(label);
-    if !ctx.link.write_verified(regs::FEEDBACK_PHI_E_OFFSET, cfg.phi_e_offset & 0xFFFF, 0xFFFF)? {
-        ctx.fail(label, "写入失败");
-        return Err(LinkError::ValueError("0x242 写入失败".into()));
+    if cfg.write_phi_e_offset {
+        if !ctx
+            .link
+            .write_verified(regs::FEEDBACK_PHI_E_OFFSET, cfg.phi_e_offset & 0xFFFF, 0xFFFF)?
+        {
+            ctx.fail(label, "写入失败");
+            return Err(LinkError::ValueError("0x242 写入失败".into()));
+        }
+        ctx.ok(label, format!("0x{:04X}（按遗留表复现）", cfg.phi_e_offset & 0xFFFF));
+    } else {
+        ctx.ok(label, "跳过：偏移由「对齐与闭环 → 电角度对齐」测得后写回");
     }
-    ctx.ok(label, format!("0x{:04X}", cfg.phi_e_offset & 0xFFFF));
 
     // 9. PWM period + CSA gain
     let label = "PWM 周期 / 电流采样增益";
