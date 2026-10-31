@@ -202,9 +202,11 @@ export default function EncoderPage() {
                   options={ENCODER_PRESETS.map((p) => ({ value: p.id, label: p.label }))}
                 />
               </Field>
-              <div style={{ flex: 1 }} className="tiny muted">
-                {preset.note}
-              </div>
+              {preset.note && (
+                <div style={{ flex: 1 }} className="tiny muted">
+                  {preset.note}
+                </div>
+              )}
             </div>
 
             <div className="grid cols-4" style={{ gap: 10 }}>
