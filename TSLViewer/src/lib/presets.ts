@@ -48,6 +48,33 @@ export const ENCODER_PRESETS: EncoderPreset[] = [
   },
 ];
 
+export interface StoragePreset {
+  id: string;
+  label: string;
+  /** 占用哪两个引脚 —— 本板的 I²C 只能落在 HALL_U/HALL_V 上。 */
+  pins: string;
+  /** 容量 / 接口，显示在下拉框右上角。 */
+  spec: string;
+  note?: string;
+}
+
+/** 板上那颗存储芯片。选 "none" 表示板子上没有装。 */
+export const STORAGE_PRESETS: StoragePreset[] = [
+  {
+    id: "m24c02",
+    label: "M24C02-FMH6TG · 256 B",
+    pins: "SDA=HALL_U · SCL=HALL_V",
+    spec: "I²C EEPROM",
+    note: "启用后霍尔传感器与第二路反馈不可用",
+  },
+  {
+    id: "none",
+    label: "无 / 不使用",
+    pins: "",
+    spec: "未装存储",
+  },
+];
+
 export interface TeslaProfile {
   name: string;
   poles: number;

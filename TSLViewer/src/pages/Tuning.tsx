@@ -406,10 +406,10 @@ export default function TuningPage() {
                   setCurI(p.bench.i);
                   setCurNp(1);
                   setCurNi(1);
-                  app.toast("ok", "已载入台架实测电流环 359/129");
+                  app.toast("ok", "已载入实测电流环 359/129");
                 }}
               >
-                载入台架电流环
+                载入实测电流环
               </Button>
               {loaded && <span className="tiny muted">已从芯片读取</span>}
             </div>
@@ -441,7 +441,7 @@ export default function TuningPage() {
                 <tr>
                   <th>项</th>
                   <th>生产</th>
-                  <th>台架</th>
+                  <th>实测</th>
                 </tr>
               </thead>
               <tbody>

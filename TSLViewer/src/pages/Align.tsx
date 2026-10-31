@@ -292,7 +292,7 @@ export default function AlignPage() {
               <b> 电流归一化 = Shift by 8</b>；④ <span className="mono">0x14A</span> 力矩限幅 &gt; 0。
             </Notice>
             <div className="tiny muted">
-              若 300 RPM 目标下实际转速在 200–330 RPM 摆动（遗留上位机的现象），说明速度环 P/I 偏大或测速更新率不足，
+              若 300 RPM 目标下实际转速在 200–330 RPM 摆动，说明速度环 P/I 偏大或测速更新率不足，
               请到「PID 与限幅」页做阶跃测试重新整定。
             </div>
           </div>

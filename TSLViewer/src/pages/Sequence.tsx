@@ -208,7 +208,7 @@ export default function SequencePage() {
 
             <div className="divider" />
             <Check checked={safety} onChange={setSafety}>
-              我已确认电机固定、台架电源限流；测试会驱动电机正反转
+              我已确认电机已固定、电源限流已设置；测试会驱动电机正反转
             </Check>
             <div className="row" style={{ gap: 8 }}>
               <Button

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app-store";
-import { ENCODER_PRESETS, PHI_E_OFFSETS, TESLA_PROFILE } from "../lib/presets";
+import { ENCODER_PRESETS, PHI_E_OFFSETS, STORAGE_PRESETS, TESLA_PROFILE } from "../lib/presets";
 import {
   Badge,
   Button,
@@ -68,6 +68,9 @@ export default function EncoderPage() {
   const preset0 = ENCODER_PRESETS[0];
   const [presetId, setPresetId] = useState(preset0.id);
   const preset = ENCODER_PRESETS.find((p) => p.id === presetId) ?? preset0;
+  /** 板上那颗 EEPROM（只声明硬件，不改编码器寄存器）。 */
+  const [storageId, setStorageId] = useState(STORAGE_PRESETS[0].id);
+  const storage = STORAGE_PRESETS.find((p) => p.id === storageId) ?? STORAGE_PRESETS[0];
 
   const [frameBits, setFrameBits] = useState(preset.frameBits);
   const [spiMode, setSpiMode] = useState(preset.spiMode);
@@ -194,20 +197,30 @@ export default function EncoderPage() {
           right={<Badge tone="neutral">{preset.label}</Badge>}
         >
           <div className="stack" style={{ gap: 12 }}>
-            <div className="row" style={{ gap: 10, alignItems: "flex-end" }}>
-              <Field label="预设" hint="选择后自动填充" style={{ flex: 1 }}>
+            <div className="grid cols-2" style={{ gap: 10 }}>
+              <Field label="编码器" hint="选择后自动填充">
                 <SelectField
                   value={presetId}
                   onChange={applyPreset}
                   options={ENCODER_PRESETS.map((p) => ({ value: p.id, label: p.label }))}
                 />
               </Field>
-              {preset.note && (
-                <div style={{ flex: 1 }} className="tiny muted">
-                  {preset.note}
-                </div>
-              )}
+              <Field label="板上存储" hint={storage.spec}>
+                <SelectField
+                  value={storageId}
+                  onChange={setStorageId}
+                  options={STORAGE_PRESETS.map((p) => ({ value: p.id, label: p.label }))}
+                />
+              </Field>
             </div>
+            {(preset.note || storage.note) && (
+              <div className="tiny muted">
+                {preset.note}
+                {preset.note && storage.note ? "；" : ""}
+                {storage.note}
+                {storage.pins ? `（${storage.pins}）` : ""}
+              </div>
+            )}
 
             <div className="grid cols-4" style={{ gap: 10 }}>
               <Field label="极对数" hint="PHI_E_MUL_FACTOR">
@@ -264,7 +277,7 @@ export default function EncoderPage() {
               <Field label="SCK 频率" hint={`half=${half} → ${(actualSck / 1e6).toFixed(2)} MHz`}>
                 <NumField value={spiHz} onChange={setSpiHz} min={117_188} max={3_000_000} step={100_000} unit="Hz" />
               </Field>
-              <Field label="CSN 间隔" hint={`≈${frameRateText} 读取率`}>
+              <Field label="CSN 高电平" hint={`≈${frameRateText} 读取率`}>
                 <NumField value={idle} onChange={setIdle} min={0} max={255} />
               </Field>
             </div>
@@ -295,14 +308,18 @@ export default function EncoderPage() {
 
             <div className="row" style={{ gap: 14, flexWrap: "nowrap", whiteSpace: "nowrap" }}>
               <Check checked={csnEncN} onChange={setCsnEncN}>
-                u[7]=1 · CS 走 ENC_N
+                片选（CS）接在 ENC_N 引脚
               </Check>
               <Check checked={writeVel} onChange={setWriteVel}>
-                同时写入速度测量配置（0x244/0x245）
+                同时写入测速配置
               </Check>
               <Check checked={firstCalib} onChange={(v) => setOffsetSrc(v ? "__calib" : "")}>
-                初次电角度偏置标定 0x242
+                电角度偏置待标定（本次不写 0x242）
               </Check>
+            </div>
+            <div className="tiny muted">
+              本板接线：时钟 = ENC_A、数据 = ENC_B、片选 = ENC_N。勾上「片选接 ENC_N」才能读到角度；
+              取消会改走 HALL_W，这颗板子读到的角度恒为 0。
             </div>
             {writeVel && (
               <div className="row" style={{ gap: 10 }}>
@@ -375,7 +392,7 @@ export default function EncoderPage() {
             <Notice tone={live && live.raw !== 0 ? "ok" : "warn"}>
               {live && live.raw !== 0
                 ? "已读到角度：用手转一圈，机械角应从 0° 走到 360° 再回 0°。"
-                : "PHI_EXT_A 为 0：检查 SCK/SDO/CSN 接线、u[7] 选择与预置数据。"}
+                : "PHI_EXT_A 为 0：检查 SCK/SDO/CSN 接线、片选引脚选择与预置数据。"}
             </Notice>
           </Card>
 
