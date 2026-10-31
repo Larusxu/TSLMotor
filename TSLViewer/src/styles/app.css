@@ -826,7 +826,45 @@ a {
 }
 
 /* ------------------------------------------------------------- stepper --- */
-.steps {
+/* 流程框：固定高度，内容超出用内部滚动条，不会把卡片撑大 */
+.steps-box {
+  position: relative;
+  min-height: 0;
+  border-radius: var(--r-sm);
+  background: rgba(0, 0, 0, 0.14);
+  border: 1px solid var(--line-soft);
+  overflow: hidden;
+}
+.steps-scroll {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px;
+  scrollbar-gutter: stable;
+}
+.steps-scroll .empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.steps-paused {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 4px 9px;
+  font-size: 10.5px;
+  color: var(--text-2);
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: var(--shadow-2);
+}
+.steps-paused:hover {
+  border-color: var(--accent-line);
+  color: var(--text);
+}.steps {
   display: grid;
   gap: 2px;
 }

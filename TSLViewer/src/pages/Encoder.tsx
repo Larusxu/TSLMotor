@@ -340,9 +340,22 @@ export default function EncoderPage() {
           </div>
         </Card>
 
-        <Card title="配置流程" sub="WRITE SEQUENCE" right={<Badge tone={app.jobRunning ? "accent" : "neutral"} dot={app.jobRunning ? "live" : undefined}>{app.jobRunning ? "执行中" : "空闲"}</Badge>}>
-          <div className="scroll-y" style={{ maxHeight: 300 }}>
-            <Steps steps={app.steps} />
+        <Card title="配置流程" sub="WRITE · ALIGN" right={<Badge tone={app.jobRunning ? "accent" : "neutral"} dot={app.jobRunning ? "live" : undefined}>{app.jobRunning ? "执行中" : "空闲"}</Badge>}>
+          <div className="grid cols-2" style={{ gap: 12 }}>
+            <div className="stack" style={{ gap: 7 }}>
+              <div className="row" style={{ gap: 8 }}>
+                <span className="stat-label" style={{ margin: 0 }}>编码器写入</span>
+                <span className="tiny muted">WRITE SEQUENCE</span>
+              </div>
+              <Steps steps={app.stepsByKind.encoder ?? []} height={232} />
+            </div>
+            <div className="stack" style={{ gap: 7 }}>
+              <div className="row" style={{ gap: 8 }}>
+                <span className="stat-label" style={{ margin: 0 }}>电角度对齐</span>
+                <span className="tiny muted">ALIGN SEQUENCE</span>
+              </div>
+              <Steps steps={app.stepsByKind.calibrate ?? []} height={232} />
+            </div>
           </div>
         </Card>
         </div>
@@ -422,8 +435,6 @@ export default function EncoderPage() {
           </Card>
         </div>
       </div>
-
-      <div className="divider" />
 
       <AlignmentPanels />
     </div>

@@ -625,23 +625,84 @@ export interface StepState {
   detail: string;
 }
 
-export function Steps({ steps }: { steps: StepState[] }) {
-  if (!steps.length)
-    return <div className="empty">尚未执行</div>;
+/**
+ * 流程步骤列表：高度固定（不随内容增长），超出后自己滚。
+ * 默认自动跟随最新一步；用户用滚轮往上翻时暂停跟随，滚回底部自动恢复。
+ */
+export function Steps({
+  steps,
+  height = 232,
+  emptyText = "尚未执行",
+}: {
+  steps: StepState[];
+  height?: number;
+  emptyText?: string;
+}) {
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const followRef = useRef(true);
+  const [paused, setPaused] = useState(false);
+
+  const atBottom = (el: HTMLDivElement) => el.scrollHeight - el.scrollTop - el.clientHeight <= 6;
+
+  useEffect(() => {
+    const el = boxRef.current;
+    if (el && followRef.current) el.scrollTop = el.scrollHeight;
+  }, [steps]);
+
+  const onScroll = () => {
+    const el = boxRef.current;
+    if (!el) return;
+    const bottom = atBottom(el);
+    followRef.current = bottom;
+    setPaused(!bottom);
+  };
+
+  const jumpToLatest = () => {
+    const el = boxRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    followRef.current = true;
+    setPaused(false);
+  };
+
   return (
-    <div className="steps">
-      {steps.map((s, i) => (
-        <div key={`${s.idx}-${i}`} className={`step ${s.status}`}>
-          <span className="idx">{String(s.idx).padStart(2, "0")}</span>
-          <span className="row" style={{ gap: 8, minWidth: 0 }}>
-            <span className="dot" />
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {s.label}
-            </span>
-          </span>
-          <span className="detail">{s.detail}</span>
-        </div>
-      ))}
+    <div className="steps-box" style={{ height }}>
+      <div
+        className="steps-scroll"
+        ref={boxRef}
+        onScroll={onScroll}
+        onWheel={(e) => {
+          // 往上翻即暂停跟随，避免"正看着被拽走"
+          if (e.deltaY < 0) {
+            followRef.current = false;
+            setPaused(true);
+          }
+        }}
+      >
+        {steps.length === 0 ? (
+          <div className="empty">{emptyText}</div>
+        ) : (
+          <div className="steps">
+            {steps.map((s, i) => (
+              <div key={`${s.idx}-${i}`} className={`step ${s.status}`}>
+                <span className="idx">{String(s.idx).padStart(2, "0")}</span>
+                <span className="row" style={{ gap: 8, minWidth: 0 }}>
+                  <span className="dot" />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {s.label}
+                  </span>
+                </span>
+                <span className="detail">{s.detail}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {paused && steps.length > 0 && (
+        <button className="steps-paused" onClick={jumpToLatest} title="回到底部并恢复自动跟随">
+          已暂停跟随 · 跳到最新
+        </button>
+      )}
     </div>
   );
 }

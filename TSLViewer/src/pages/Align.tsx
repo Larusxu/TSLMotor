@@ -13,7 +13,6 @@ import {
   KV,
   Notice,
   NumField,
-  Steps,
 } from "../components/ui";
 import { countsFromMa, fmt, hex } from "../lib/units";
 import type { CalibCfgPayload, CalibResult } from "../lib/types";
@@ -133,12 +132,6 @@ export function AlignmentPanels() {
               </Button>
               {!app.armed && <span className="tiny muted">需解锁 ARM</span>}
             </div>
-          </div>
-        </Card>
-
-        <Card title="对齐流程" sub="ALIGN SEQUENCE">
-          <div className="scroll-y" style={{ maxHeight: 320 }}>
-            <Steps steps={app.steps} />
           </div>
         </Card>
         </div>
