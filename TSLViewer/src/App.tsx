@@ -293,14 +293,14 @@ function Shell() {
           />
         </header>
 
+        {/* 页头固定在顶行：任何页面滚动时标题与说明都不会消失 */}
+        <div className="subbar">
+          <h1 className="page-title">{TITLES[page].title}</h1>
+          <p className="page-desc">{TITLES[page].desc}</p>
+        </div>
+
         <main className="content" ref={contentRef}>
           <div className="page-enter" key={page}>
-            <div className="page-head">
-              <div>
-                <h1 className="page-title">{TITLES[page].title}</h1>
-                <p className="page-desc">{TITLES[page].desc}</p>
-              </div>
-            </div>
             {page === "overview" && <Overview />}
             {page === "encoder" && <Encoder />}
             {page === "homing" && <Homing />}
