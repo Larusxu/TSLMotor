@@ -6,6 +6,7 @@
 
 mod gateway;
 mod axis;
+mod homing;
 mod link;
 mod procs;
 mod proto;
@@ -68,7 +69,7 @@ fn connect(state: State<'_, AppState>, port: String, baud: u32, mode: Option<Str
 
 #[tauri::command(async)]
 fn main_control(state: State<'_, AppState>, motor:u8, op:u8, data:Vec<u8>)->Result<Vec<u8>,String> {
-    if ![4,5,6,10,11].contains(&op) || motor>16 {return Err("Invalid controller operation".into());}
+    if ![4,5,6,10,11,12,13,14].contains(&op) || motor>16 {return Err("Invalid controller operation".into());}
     state.link.gateway_control(motor,op,&data).map_err(|e|e.to_string())
 }
 
@@ -321,6 +322,59 @@ fn cancel_job(state: State<'_, AppState>) {
     state.link.log("warn", "job", "已请求取消当前任务");
 }
 
+// ------------------------------------------------------------- 机械找零
+//
+// 上位机只下发参数、只读状态；状态机与判据在主控固件里（TODO-01）。
+
+#[tauri::command(async)]
+fn homing_start(
+    state: State<'_, AppState>,
+    params: homing::HomingParams,
+    motor: Option<u8>,
+) -> Result<(), String> {
+    if !state.link.is_connected() {
+        return Err("串口未连接".into());
+    }
+    let bytes = homing::encode_start(&params)?;
+    let m = motor.unwrap_or(1);
+    let reply = state
+        .link
+        .gateway_control(m, homing::OP_HOMING_START, &bytes)
+        .map_err(|e| e.to_string())?;
+    if reply.is_empty() {
+        return Err("主控固件尚未实现找零（见 doc/TODO/TODO-01-机械找零.md）".into());
+    }
+    if reply[0] == 0 {
+        return Err("主控拒绝开始找零：请检查运动授权、编码器有效性与当前状态".into());
+    }
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn homing_state(state: State<'_, AppState>, motor: Option<u8>) -> Result<homing::HomingState, String> {
+    if !state.link.is_connected() {
+        return Err("串口未连接".into());
+    }
+    let reply = state
+        .link
+        .gateway_control(motor.unwrap_or(1), homing::OP_HOMING_STATE, &[])
+        .map_err(|e| e.to_string())?;
+    homing::decode_state(&reply)
+        .ok_or_else(|| "主控固件尚未实现找零状态查询（见 doc/TODO/TODO-01-机械找零.md）".into())
+}
+
+#[tauri::command(async)]
+fn homing_cancel(state: State<'_, AppState>, motor: Option<u8>) -> Result<(), String> {
+    if !state.link.is_connected() {
+        return Err("串口未连接".into());
+    }
+    state
+        .link
+        .gateway_control(motor.unwrap_or(1), homing::OP_HOMING_CANCEL, &[])
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 // ------------------------------------------------------------ EEPROM storage
 
 #[tauri::command(async)]
@@ -543,6 +597,9 @@ pub fn run() {
             axis_move,
             axis_hold,
             axis_clear,
+            homing_start,
+            homing_state,
+            homing_cancel,
             get_logs,
             clear_logs,
             reports_path,

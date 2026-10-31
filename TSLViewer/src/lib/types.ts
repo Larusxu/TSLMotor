@@ -314,6 +314,34 @@ export interface EepromSave {
   elapsed_ms: number;
 }
 
+// --------------------------------------------------------------- 机械找零
+/**
+ * 上位机唯一下发的找零工艺参数。
+ * 门控、推进、电流判据、超时、零点写入全部由**主控固件**裁决，上位机不参与。
+ */
+export interface HomingParams {
+  /** 找零方向：-1 = 负方向（默认，对应缩回侧限位） */
+  dir: -1 | 1;
+  /** 每拍推进量，单位 0.01°（电机端）。默认 1500 = 15° */
+  step_unit: number;
+}
+
+/** 主控上报的找零状态。上位机只读，不推算、不覆盖。 */
+export interface HomingState {
+  /** 0 空闲 / 1 进行中 / 2 成功 / 3 失败 */
+  stage: number;
+  /** 行程零点有效；上电必清 */
+  zero_valid: boolean;
+  /** q 轴实测电流，mA */
+  iq_ma: number;
+  /** 本次找零已用时，ms */
+  elapsed_ms: number;
+  /** 错误码 0 无 / 1 超时 / 2 控制器故障 / 3 取消 / 4 断使能 / 5 编码器无效 / 6 未授权 */
+  error: number;
+  /** 主控给出的说明（可为空） */
+  message: string;
+}
+
 export interface EepromLoad {
   found: boolean;
   block: string;

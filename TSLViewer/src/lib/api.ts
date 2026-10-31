@@ -30,6 +30,8 @@ import type {
   EepromProbe,
   EepromSave,
   EepromLoad,
+  HomingParams,
+  HomingState,
 } from "./types";
 
 export const HAS_TAURI =
@@ -95,6 +97,9 @@ const real = {
   eepromSave: (params: StoreParams) => invoke<EepromSave>("eeprom_save", { params }),
   eepromLoad: () => invoke<EepromLoad>("eeprom_load"),
   eepromErase: () => invoke<number>("eeprom_erase"),
+  homingStart: (params: HomingParams) => invoke<void>("homing_start", { params }),
+  homingState: () => invoke<HomingState>("homing_state"),
+  homingCancel: () => invoke<void>("homing_cancel"),
 };
 
 // ---------------------------------------------------------------------------
@@ -193,6 +198,152 @@ const mock = (() => {
     }
   }, 40);
   void wrap;
+
+  // ---- 机械找零：模拟「主控固件」的状态机 --------------------------------
+  // 上位机只做两件事：下发方向与步进（homingStart）、轮询状态（homingState）。
+  // 门控、推进、电流判据、超时、零点写入、退开全部在这里（= 固件侧）完成，
+  // 与 doc/TODO/TODO-01-机械找零.md 的约定一致。
+  const HOMING_FW = {
+    /** 额定电流刻度（本工程取力矩限幅 800 mA） */
+    ratedMa: 800,
+    /** 判定系数 k：阈值 = k × 额定 */
+    k: 0.4,
+    /** 连续超阈确认时间 */
+    confirmMs: 50,
+    /** 找零期间的电流上限，必须 > 阈值 */
+    limitMa: 600,
+    /** 推进速度上限，仅用于仿真时长 */
+    maxRpm: 2000,
+    /** 找零超时 */
+    timeoutMs: 60_000,
+    /** 退开量（电机端） */
+    retreatDeg: 360,
+    /** 退开后的稳定等待 */
+    settleMs: 2000,
+  };
+  const HOMING_THRESHOLD_MA = HOMING_FW.ratedMa * HOMING_FW.k;
+  type HomingPhase = "idle" | "approach" | "contact" | "retreat" | "settle";
+  const homing = {
+    stage: 0,
+    zeroValid: false,
+    iq: 0,
+    error: 0,
+    message: "",
+    phase: "idle" as HomingPhase,
+    dir: -1 as -1 | 1,
+    stepUnit: 1500,
+    elapsed: 0,
+    contactMs: 0,
+    togoDeg: 0,
+    retreatLeft: 0,
+    settleLeft: 0,
+    timer: null as number | null,
+  };
+  const homingSnapshot = (): HomingState => ({
+    stage: homing.stage,
+    zero_valid: homing.zeroValid,
+    iq_ma: Math.round(homing.iq),
+    elapsed_ms: homing.elapsed,
+    error: homing.error,
+    message: homing.message,
+  });
+  const homingStop = () => {
+    if (homing.timer !== null) window.clearInterval(homing.timer);
+    homing.timer = null;
+    homing.phase = "idle";
+  };
+  const homingFail = (code: number, why: string) => {
+    homingStop();
+    homing.stage = 3;
+    homing.error = code;
+    homing.message = why;
+    homing.iq = 0; // 卸力
+    homing.contactMs = 0;
+    log("error", "homing", `找零失败：${why}（零点不写入）`);
+  };
+  const homingTick = () => {
+    const dt = 40;
+    homing.elapsed += dt;
+    if (homing.elapsed > HOMING_FW.timeoutMs) {
+      homingFail(1, "找零超时");
+      return;
+    }
+    // 电流判据：连续超阈才算接触，任何一拍掉回阈值以下立即清零
+    const above = Math.abs(homing.iq) >= HOMING_THRESHOLD_MA;
+    homing.contactMs = above ? homing.contactMs + dt : 0;
+
+    switch (homing.phase) {
+      case "approach": {
+        // 未接触：只克服摩擦；偶发尖峰不足以撑满确认时间
+        const spike = Math.random() < 0.08 ? 120 : 0;
+        homing.iq = homing.dir * (140 + Math.random() * 40 + spike);
+        // 预览用的推进速率（固件按 2000 RPM 上限跑，这里放慢便于观察状态）
+        homing.togoDeg -= (900 * dt) / 1000;
+        if (homing.togoDeg <= 0) {
+          homing.phase = "contact";
+          homing.contactMs = 0;
+        }
+        break;
+      }
+      case "contact": {
+        // 顶住挡块：给定继续跑，电流被限幅钳住
+        homing.iq = homing.dir * (HOMING_FW.limitMa + (Math.random() - 0.5) * 30);
+        if (homing.contactMs >= HOMING_FW.confirmMs) {
+          // 记录实测位置作为零点，并立即退开（避免长期顶紧）
+          homing.zeroValid = false;
+          homing.phase = "retreat";
+          homing.retreatLeft = HOMING_FW.retreatDeg;
+          log("info", "homing", `检测到接触（${homing.contactMs} ms 连续超阈），零点已记录`);
+        }
+        break;
+      }
+      case "retreat": {
+        homing.iq = -homing.dir * 120;
+        homing.retreatLeft -= (HOMING_FW.maxRpm * 6 * dt) / 1000;
+        if (homing.retreatLeft <= 0) {
+          homing.phase = "settle";
+          homing.settleLeft = HOMING_FW.settleMs;
+        }
+        break;
+      }
+      case "settle": {
+        homing.iq *= 0.6;
+        homing.settleLeft -= dt;
+        if (homing.settleLeft <= 0) {
+          homingStop();
+          homing.stage = 2;
+          homing.zeroValid = true;
+          homing.error = 0;
+          homing.message = "找零完成";
+          log("ok", "homing", "行程零点有效");
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  };
+  /** 门控在固件侧裁决：这里只模拟「未连接 / 已在跑」两种拒绝。 */
+  const homingStart = (params: HomingParams) => {
+    if (homing.stage === 1) throw new Error("找零进行中，请先取消或等待结束");
+    homing.stage = 1;
+    homing.error = 0;
+    homing.message = "进行中";
+    homing.dir = params.dir;
+    homing.stepUnit = params.step_unit;
+    homing.elapsed = 0;
+    homing.contactMs = 0;
+    // 起点到限位的距离由机构决定，这里随机取一段行程
+    homing.togoDeg = 1200 + Math.random() * 2400;
+    homing.phase = "approach";
+    log(
+      "info",
+      "homing",
+      `已请求找零：方向 ${params.dir > 0 ? "+" : "−"}${(params.step_unit / 100).toFixed(2)}°/拍（固件裁决后开始推进）`
+    );
+    if (homing.timer !== null) window.clearInterval(homing.timer);
+    homing.timer = window.setInterval(homingTick, 40);
+  };
 
   const seed = (addr: number) => {
     if (!regCache.has(addr)) {
@@ -633,6 +784,19 @@ const mock = (() => {
       mockParams = null;
       mockEeprom.fill(0xff);
       return 8;
+    },
+    async homingStart(params: HomingParams, _motor?: number): Promise<void> {
+      await delay(60);
+      if (!connected) throw new Error("串口未连接");
+      homingStart(params);
+    },
+    async homingState(_motor?: number): Promise<HomingState> {
+      return homingSnapshot();
+    },
+    async homingCancel(_motor?: number): Promise<void> {
+      await delay(40);
+      if (homing.stage !== 1) return;
+      homingFail(3, "已取消");
     },
     async sequence(cfg: SeqCfgPayload): Promise<SeqResult> {
       const job = `sequence:${Date.now()}`;

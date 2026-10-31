@@ -258,6 +258,11 @@ export default function AxisPage() {
 
           <Card title="回零向导" sub="FIND STOP">
             <div className="stack" style={{ gap: 10 }}>
+              <Notice tone="warn">
+                正式找零由<b>主控固件</b>执行（撞限位 + 电流判据），请用
+                <b> 编码器页 → 「机械找零」</b>。本卡是固件未实现找零时的手动兜底：
+                需要操作者自己判断"顶住了"。
+              </Notice>
               <div className="tiny muted">
                 让轴低速顶到缩回侧的机械限位，读到的位置就是原点。顺序：
                 ① 临时关软限位 → ② 低速缩回 → ③ 顶住后停止 → ④ 设为原点 → ⑤ 重新写入软限位。
