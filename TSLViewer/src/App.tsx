@@ -76,7 +76,7 @@ const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
   },
   homing: {
     title: "机械找零",
-    desc: "撞限位建立行程零点。上位机只下发方向与步进、显示状态；推进与判据在主控固件。",
+    desc: "撞限位建立行程零点。上位机下发方向、步进与工艺参数并显示状态；推进与判据在主控固件。",
     crumb: "HOMING",
   },
   axis: {

@@ -2,18 +2,30 @@ import { useEffect, useState } from "react";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app-store";
-import { Badge, Button, Card, Check, Field, Icon, KV, Notice, NumField, SelectField } from "../components/ui";
+import { Badge, Button, Card, Check, Field, Icon, Notice, NumField, SelectField, Stat } from "../components/ui";
 import type { HomingState } from "../lib/types";
 
-/** 主控固件的找零常量：上位机只展示，不参与判定（见 doc/TODO/TODO-01-机械找零.md）。 */
-const HOMING_FW = {
-  thresholdMa: 320, // 0.4 × 额定 800 mA
+/**
+ * 找零参数默认值（= 固件参考实现，见 doc/TODO/TODO-01-机械找零.md）。
+ * 现在可编辑但还不下发：等主控固件支持 `op 12` 的可选参数段后，一次写进主控。
+ */
+const HOMING_DEFAULT = {
+  /** 判定系数 k：阈值 = k × 额定电流 */
+  k: 0.4,
+  /** 额定电流刻度，mA */
+  ratedMa: 800,
+  /** 连续超阈确认时间 */
   confirmMs: 50,
+  /** 找零期间电流上限，mA */
   limitMa: 600,
+  /** 推进速度上限，RPM */
   maxRpm: 2000,
-  timeoutS: 60,
+  /** 到位后反向退开量（电机端角度） */
   retreatDeg: 360,
+  /** 退开后稳定等待，ms */
   settleMs: 2000,
+  /** 找零超时，s */
+  timeoutS: 60,
 };
 
 function HomingStageBadge({ stage }: { stage: number }) {
@@ -24,7 +36,7 @@ function HomingStageBadge({ stage }: { stage: number }) {
 }
 
 /**
- * 机械找零（撞限位回零）。上位机只下发方向与步进、显示主控上报的状态；
+ * 机械找零（撞限位回零）。上位机下发方向/步进与工艺参数、显示主控上报的状态；
  * 门控、推进、电流判据、超时与零点写入全部在主控固件里（TODO-01）。
  */
 export default function HomingPage() {
@@ -34,7 +46,9 @@ export default function HomingPage() {
   const [safety, setSafety] = useState(false);
   const [hom, setHom] = useState<HomingState | null>(null);
   const [note, setNote] = useState("");
+  const [cfg, setCfg] = useState(HOMING_DEFAULT);
   const running = hom?.stage === 1;
+  const thresholdMa = Math.round(cfg.k * cfg.ratedMa);
 
   useEffect(() => {
     if (!app.connected) {
@@ -92,8 +106,8 @@ export default function HomingPage() {
         <div className="grid cols-2" style={{ gap: 14 }}>
           <div className="stack" style={{ gap: 12 }}>
             <Notice tone="neutral">
-              这是<b>撞限位回零</b>：电机朝限位方向持续推进，主控用「q 轴电流超阈 + <b>连续</b> 50 ms」判定接触，
-              记录实测位置为行程零点后反向退开一圈。上位机只下发方向与步进、显示状态；
+              这是<b>撞限位回零</b>：电机朝限位方向持续推进，主控用「q 轴电流超阈 + <b>连续</b> 确认时间」判定接触，
+              记录实测位置为行程零点后反向退开一圈。上位机下发方向、步进与右侧工艺参数并显示状态；
               门控、判据、超时与零点写入全部由主控固件裁决。
             </Notice>
             <div className="grid cols-2" style={{ gap: 10 }}>
@@ -151,53 +165,118 @@ export default function HomingPage() {
           </div>
 
           <div className="stack" style={{ gap: 12 }}>
-            <KV
-              rows={[
-                ["找零状态", <HomingStageBadge key="s" stage={hom?.stage ?? 0} />],
-                [
-                  "行程零点",
-                  hom?.zero_valid ? (
-                    <Badge key="z" tone="ok">
-                      有效
-                    </Badge>
-                  ) : (
-                    <Badge key="z" tone="warn">
-                      需找零
-                    </Badge>
-                  ),
-                ],
-                [
-                  "i_q 实测",
-                  <span key="i" className="mono">
-                    {(hom?.iq_ma ?? 0).toFixed(0)} mA
-                    <span className="muted tiny"> / 阈值 {HOMING_FW.thresholdMa}</span>
-                  </span>,
-                ],
-                [
-                  "已用时",
-                  <span key="t" className="mono">
-                    {((hom?.elapsed_ms ?? 0) / 1000).toFixed(1)} s
-                    <span className="muted tiny"> / 超时 {HOMING_FW.timeoutS} s</span>
-                  </span>,
-                ],
-              ]}
-            />
+            <div className="row" style={{ gap: 8 }}>
+              <span className="stat-label" style={{ margin: 0 }}>找零参数</span>
+              <span className="tiny muted">待写入主控 · 现在只改界面</span>
+            </div>
+            <div className="grid cols-2" style={{ gap: 10 }}>
+              <Field label="判定系数 k" hint={`阈值 = ${thresholdMa} mA`}>
+                <NumField
+                  value={cfg.k}
+                  onChange={(v) => setCfg({ ...cfg, k: v })}
+                  min={0.1}
+                  max={2}
+                  step={0.05}
+                />
+              </Field>
+              <Field label="额定电流" hint="判据基准">
+                <NumField
+                  value={cfg.ratedMa}
+                  onChange={(v) => setCfg({ ...cfg, ratedMa: v })}
+                  min={100}
+                  max={3000}
+                  step={50}
+                  unit="mA"
+                />
+              </Field>
+              <Field label="连续确认" hint="抗瞬态">
+                <NumField
+                  value={cfg.confirmMs}
+                  onChange={(v) => setCfg({ ...cfg, confirmMs: v })}
+                  min={10}
+                  max={1000}
+                  step={10}
+                  unit="ms"
+                />
+              </Field>
+              <Field
+                label="找零电流上限"
+                hint={cfg.limitMa <= thresholdMa ? "必须 > 阈值" : `> 阈值 ${thresholdMa}`}
+              >
+                <NumField
+                  value={cfg.limitMa}
+                  onChange={(v) => setCfg({ ...cfg, limitMa: v })}
+                  min={100}
+                  max={2000}
+                  step={50}
+                  unit="mA"
+                />
+              </Field>
+              <Field label="推进速度上限">
+                <NumField
+                  value={cfg.maxRpm}
+                  onChange={(v) => setCfg({ ...cfg, maxRpm: v })}
+                  min={100}
+                  max={6000}
+                  step={100}
+                  unit="RPM"
+                />
+              </Field>
+              <Field label="找零超时">
+                <NumField
+                  value={cfg.timeoutS}
+                  onChange={(v) => setCfg({ ...cfg, timeoutS: v })}
+                  min={5}
+                  max={300}
+                  step={5}
+                  unit="s"
+                />
+              </Field>
+              <Field label="退开量" hint="电机端">
+                <NumField
+                  value={cfg.retreatDeg}
+                  onChange={(v) => setCfg({ ...cfg, retreatDeg: v })}
+                  min={0}
+                  max={1080}
+                  step={30}
+                  unit="°"
+                />
+              </Field>
+              <Field label="退开稳定等待">
+                <NumField
+                  value={cfg.settleMs}
+                  onChange={(v) => setCfg({ ...cfg, settleMs: v })}
+                  min={0}
+                  max={10000}
+                  step={100}
+                  unit="ms"
+                />
+              </Field>
+            </div>
+            {cfg.limitMa <= thresholdMa && (
+              <Notice tone="warn">
+                找零电流上限 {cfg.limitMa} mA 不大于判定阈值 {thresholdMa} mA，判据永远无法满足，找零一定超时。
+              </Notice>
+            )}
             {hom?.message && <div className="tiny muted">主控：{hom.message}</div>}
-            <div className="divider" />
-            <div className="tiny muted">主控固件常量（上位机只展示，不可改）</div>
-            <KV
-              rows={[
-                ["判定阈值", <span key="a" className="mono">0.4 × 额定 = {HOMING_FW.thresholdMa} mA</span>],
-                ["连续确认", <span key="b" className="mono">{HOMING_FW.confirmMs} ms</span>],
-                ["找零电流上限", <span key="c" className="mono">{HOMING_FW.limitMa} mA（须 &gt; 阈值）</span>],
-                ["推进速度上限", <span key="d" className="mono">{HOMING_FW.maxRpm} RPM</span>],
-                ["退开量 / 稳定", <span key="e" className="mono">{HOMING_FW.retreatDeg}° / {HOMING_FW.settleMs} ms</span>],
-                ["超时", <span key="f" className="mono">{HOMING_FW.timeoutS} s</span>],
-              ]}
-            />
           </div>
         </div>
       </Card>
+
+      <div className="grid cols-3" style={{ gap: 14 }}>
+        <Stat label="找零状态" value={<HomingStageBadge stage={hom?.stage ?? 0} />} delta="0 空闲 / 1 进行中 / 2 成功 / 3 失败" />
+        <Stat
+          label="行程零点"
+          value={hom?.zero_valid ? <Badge tone="ok">有效</Badge> : <Badge tone="warn">需找零</Badge>}
+          delta="上电必清，需每次重新找零"
+        />
+        <Stat
+          label="i_q 实测"
+          value={(hom?.iq_ma ?? 0).toFixed(0)}
+          unit="mA"
+          delta={`判定阈值 ${thresholdMa} mA`}
+        />
+      </div>
     </div>
   );
 }

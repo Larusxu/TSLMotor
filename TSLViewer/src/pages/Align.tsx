@@ -8,13 +8,13 @@ import {
   Card,
   Check,
   Field,
-  HexField,
+
   Icon,
   KV,
   Notice,
   NumField,
 } from "../components/ui";
-import { countsFromMa, fmt, hex } from "../lib/units";
+import { countsFromMa, fmt } from "../lib/units";
 import type { CalibCfgPayload, CalibResult } from "../lib/types";
 
 /** 对齐结果表在还没跑过对齐时的占位行。 */
@@ -38,7 +38,6 @@ export function AlignmentPanels() {
   const [dryRun, setDryRun] = useState(false);
   const [safety, setSafety] = useState(false);
   const [result, setResult] = useState<CalibResult | null>(null);
-  const [offset, setOffset] = useState(0);
   const [rpm, setRpm] = useState(100);
   const [runSafety, setRunSafety] = useState(false);
 
@@ -47,7 +46,6 @@ export function AlignmentPanels() {
     if (d && d.ok && d.data && typeof d.data === "object" && "offset_hex" in (d.data as object)) {
       const r = d.data as CalibResult;
       setResult(r);
-      setOffset(r.offset);
       app.toast("ok", `对齐完成：offset ${r.offset_hex} · R²=${r.r2.toFixed(5)}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -202,34 +200,12 @@ export function AlignmentPanels() {
                 })}
               </tbody>
             </table>
-            <div className="row" style={{ gap: 8 }}>
-              <div style={{ width: 120 }}>
-                <HexField value={offset} onChange={setOffset} bits={16} />
-              </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={!app.connected || !app.armed}
-                onClick={async () => {
-                  try {
-                    await api.writeReg(0x242, offset & 0xffff, true);
-                    app.toast("ok", `0x242 ← ${hex(offset, 4)}`);
-                  } catch (e) {
-                    app.toast("error", String(e));
-                  }
-                }}
-              >
-                手动写入 0x242
-              </Button>
-            </div>
-            {result ? (
+            {result && (
               <Notice tone={result.r2 > 0.99 ? "ok" : "warn"}>
                 {result.r2 > 0.99
                   ? "拟合质量良好：可以进入速度闭环。"
                   : "拟合质量一般：检查编码器打滑、极对数、SPI 掩码，或增大对齐电流后重试。"}
               </Notice>
-            ) : (
-              <div className="tiny muted">尚未执行对齐：跑一次「电角度对齐」，结果会填到这里。</div>
             )}
           </div>
         </Card>

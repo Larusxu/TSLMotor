@@ -361,41 +361,6 @@ export default function EncoderPage() {
         </div>
 
         <div className="col-stack">
-          <Card title="角度回读" sub="FEEDBACK · LIVE">
-            <div className="row" style={{ gap: 8 }}>
-              <Gauge angle={angleDeg} label="MECHANICAL" sub={`PHI_EXT_A = 0x${(live?.raw ?? 0).toString(16).toUpperCase().padStart(6, "0")}`} />
-              <Gauge angle={((live?.phiE ?? 0) / 65536) * 360} label="ELECTRICAL" sub={`PHI_E = ${live?.phiE ?? 0}`} />
-            </div>
-            <div className="divider" />
-            <KV
-              rows={[
-                ["PHI_EXT_A 原始", <span key="a" className="mono">{hex(live?.raw ?? 0, 6)}</span>],
-                ["缩放后 16-bit", <span key="b" className="mono">{live?.conv ?? 0}</span>],
-                ["电角度 16-bit", <span key="c" className="mono">{live?.phiE ?? 0}</span>],
-                ["CPR_INV", <span key="d" className="mono">{cprInv}</span>],
-                ["PHI_E_MUL_FACTOR", <span key="e" className="mono">{(snapshot[0x250] ?? 0) & 0xff}</span>],
-              ]}
-            />
-            {frameBits > 14 && live?.frame && (
-              <>
-                <div className="divider" />
-                <KV
-                  rows={[
-                    ["角度 D[13:0]", <span key="a" className="mono">{live.frame.angle}</span>],
-                    ["状态 Mg[3:0]", <span key="b" className="mono">{`0b${live.frame.mg.toString(2).padStart(4, "0")} · ${mgText(live.frame.mg)}`}</span>],
-                    ["CRC-6", <span key="c" className="mono" style={{ color: live.frame.crcOk ? "var(--ok)" : "var(--warn)" }}>{live.frame.crc} {live.frame.crcOk ? "✓" : "?"}</span>],
-                  ]}
-                />
-              </>
-            )}
-            <div className="divider" />
-            <Notice tone={live && live.raw !== 0 ? "ok" : "warn"}>
-              {live && live.raw !== 0
-                ? "已读到角度：用手转一圈，机械角应从 0° 走到 360° 再回 0°。"
-                : "PHI_EXT_A 为 0：检查 SCK/SDO/CSN 接线与预置数据。"}
-            </Notice>
-          </Card>
-
           <Card title="写入校验" sub="EXPECTED vs ACTUAL">
             <table className="table">
               <thead>
@@ -433,6 +398,41 @@ export default function EncoderPage() {
               </tbody>
             </table>
           </Card>
+          <Card title="角度回读" sub="FEEDBACK · LIVE">
+            <div className="row" style={{ gap: 8 }}>
+              <Gauge angle={angleDeg} label="MECHANICAL" sub={`PHI_EXT_A = 0x${(live?.raw ?? 0).toString(16).toUpperCase().padStart(6, "0")}`} />
+              <Gauge angle={((live?.phiE ?? 0) / 65536) * 360} label="ELECTRICAL" sub={`PHI_E = ${live?.phiE ?? 0}`} />
+            </div>
+            <div className="divider" />
+            <KV
+              rows={[
+                ["PHI_EXT_A 原始", <span key="a" className="mono">{hex(live?.raw ?? 0, 6)}</span>],
+                ["缩放后 16-bit", <span key="b" className="mono">{live?.conv ?? 0}</span>],
+                ["电角度 16-bit", <span key="c" className="mono">{live?.phiE ?? 0}</span>],
+                ["CPR_INV", <span key="d" className="mono">{cprInv}</span>],
+                ["PHI_E_MUL_FACTOR", <span key="e" className="mono">{(snapshot[0x250] ?? 0) & 0xff}</span>],
+              ]}
+            />
+            {frameBits > 14 && live?.frame && (
+              <>
+                <div className="divider" />
+                <KV
+                  rows={[
+                    ["角度 D[13:0]", <span key="a" className="mono">{live.frame.angle}</span>],
+                    ["状态 Mg[3:0]", <span key="b" className="mono">{`0b${live.frame.mg.toString(2).padStart(4, "0")} · ${mgText(live.frame.mg)}`}</span>],
+                    ["CRC-6", <span key="c" className="mono" style={{ color: live.frame.crcOk ? "var(--ok)" : "var(--warn)" }}>{live.frame.crc} {live.frame.crcOk ? "✓" : "?"}</span>],
+                  ]}
+                />
+              </>
+            )}
+            {live && live.raw === 0 && (
+              <>
+                <div className="divider" />
+                <Notice tone="warn">PHI_EXT_A 为 0：检查 SCK/SDO/CSN 接线与预置数据。</Notice>
+              </>
+            )}
+          </Card>
+
         </div>
       </div>
 
