@@ -84,7 +84,7 @@ export default function EncoderPage() {
   const [velFrq, setVelFrq] = useState(0x000da71e);
   const [velPer, setVelPer] = useState(0xfff00001);
   const [confirmWrite, setConfirmWrite] = useState(false);
-  /** 偏置来源：__calib = 初次标定（本步不写 0x242）；"" = 手动；TMC_xx = 遗留表。 */
+  /** 偏置来源：__calib = 初次标定（本步不写 0x242）；"" = 手动；TMC_xx = 预设偏移。 */
   const [offsetSrc, setOffsetSrc] = useState<string>("__calib");
   const firstCalib = offsetSrc === "__calib";
   const [live, setLive] = useState<{ raw: number; conv: number; phiE: number; frame?: ReturnType<typeof decodeMt6701> } | null>(null);
@@ -224,7 +224,7 @@ export default function EncoderPage() {
                   max={65535}
                 />
               </Field>
-              <Field label="写入已知偏移" hint="遗留表">
+              <Field label="写入已知偏移" hint="预设偏移">
                 <SelectField
                   value={offsetSrc}
                   onChange={(v) => {
@@ -337,29 +337,6 @@ export default function EncoderPage() {
         <Card title="配置流程" sub="WRITE SEQUENCE" right={<Badge tone={app.jobRunning ? "accent" : "neutral"} dot={app.jobRunning ? "live" : undefined}>{app.jobRunning ? "执行中" : "空闲"}</Badge>}>
           <div className="scroll-y" style={{ maxHeight: 300 }}>
             <Steps steps={app.steps} />
-          </div>
-        </Card>
-
-          <Card title="手册依据" sub="DATASHEET NOTES">
-          <div className="grid cols-2" style={{ gap: 12 }}>
-            <Notice>
-              <b>SPI_ENC 命令</b>（p.114）：`0xF | mode | 请求类型 | CS 间隔 | 位长 | 时钟`。请求类型 10b 表示持续轮询并写入
-              <span className="mono"> FEEDBACK.PHI_EXT_A</span>。
-            </Notice>
-            <Notice>
-              <b>MT6701 SSI</b>（§7.8.2）：24 拍 = D[13:0] + Mg[3:0] + CRC[5:0]，MSB 先出，CLK 上升沿更新、下降沿采样 → SPI 模式 1。
-            </Notice>
-            <Notice>
-              <b>16 位换算</b>（p.180）：<span className="mono">converted = angle × CPR_INV &gt;&gt; 8</span>，CPR_INV = 2^24 / CPR = {cprInv}。
-            </Notice>
-            <Notice tone="warn">
-              <b>CSA 增益</b>（Table 20/21）：遗留固件与旧上位机都写 3（4×）；<span className="mono">0x0C3</span> 上电默认是 0（1×），且 mA/LSB 恒为 0.20131，改增益只改 ADC 上限（2¹⁵/增益）。本页会写入 {csa}（{csa === 3 ? "4×" : `${csa + 1}×`}），请核对回读。
-            </Notice>
-          </div>
-          <div className="divider" />
-          <div className="tiny muted">
-            Tesla 平台常量：极对数 {TESLA_PROFILE.poles}、CPR {TESLA_PROFILE.cpr}、{TESLA_PROFILE.pwmMaxCount} → 25 kHz、{TESLA_PROFILE.maPerCount} mA/LSB。
-            每台电机的偏移见第 7 节（遗留固件表），最可靠的做法仍是重新对齐。
           </div>
         </Card>
         </div>

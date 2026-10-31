@@ -291,7 +291,7 @@ pub fn setup_encoder(ctx: &mut Ctx, cfg: &EncoderCfg) -> Result<String> {
             ctx.fail(label, "写入失败");
             return Err(LinkError::ValueError("0x242 写入失败".into()));
         }
-        ctx.ok(label, format!("0x{:04X}（按遗留表复现）", cfg.phi_e_offset & 0xFFFF));
+        ctx.ok(label, format!("0x{:04X}（复现已知偏移）", cfg.phi_e_offset & 0xFFFF));
     } else {
         ctx.ok(label, "跳过：偏移由「对齐与闭环 → 电角度对齐」测得后写回");
     }

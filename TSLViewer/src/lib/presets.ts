@@ -24,8 +24,8 @@ export interface EncoderPreset {
 export const ENCODER_PRESETS: EncoderPreset[] = [
   {
     id: "mt6701-14",
-    label: "MT6701 · SSI 14-bit（台架已验证）",
-    note: "14 拍只取角度位，CPR_INV=1024，与遗留固件一致",
+    label: "MT6701 · SSI 14-bit",
+    note: "14 拍只取角度位，CPR_INV=1024",
     frameBits: 14,
     spiMode: 1,
     spiHz: 2_000_000,
