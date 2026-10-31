@@ -162,8 +162,9 @@ const mock = (() => {
     moving: axisMoving,
     cmd_rpm: axisRpm,
   });
-  // mirrors the Rust guard: the position counter is unwrapped (no 16-bit wrap),
-  // and one tick integrates the commanded speed over 40 ms
+  // mirrors the Rust guard: only the low 16 bits of the (multiturn) position
+  // counter are used, and the turns are re-integrated; one tick integrates the
+  // commanded speed over 40 ms
   window.setInterval(() => {
     if (!axisMoving || axisRpm === 0) return;
     axisPos = Math.round(axisPos + (axisRpm * 65536) / 60 / 25);

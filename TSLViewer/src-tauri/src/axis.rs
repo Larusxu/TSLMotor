@@ -87,7 +87,7 @@ pub struct Axis {
     limits: Mutex<Limits>,
     goal: Mutex<Goal>,
     pos: AtomicI32,
-    /// last raw 16-bit sample, used to unwrap the counter across revolutions
+    /// last raw low-16-bit sample, used to unwrap the counter across revolutions
     prev_raw: AtomicI32,
     primed: AtomicBool,
     tripped: AtomicBool,
@@ -236,10 +236,12 @@ impl Axis {
     /// Feed one RTMI sample. Returns `true` the moment the guard trips so the
     /// caller can stop the motor exactly once.
     ///
-    /// The chip reports a 16-bit position that wraps every revolution, which is
-    /// useless on a lead screw that travels several turns. Consecutive samples
-    /// differ by far less than half a revolution, so the counter is unwrapped
-    /// into a continuous 32-bit value here.
+    /// The chip's `0x155` is a 32-bit multiturn counter (65536 counts per
+    /// revolution, no per-revolution reset), and RTMI frames carry all 32 bits.
+    /// We still keep only the low 16 bits — the gateway path only guarantees
+    /// 16 bits — and re-integrate the turns from consecutive samples. Adjacent
+    /// samples differ by far less than half a revolution, so the counter is
+    /// unwrapped into a continuous 32-bit value here.
     pub fn observe(&self, ch: u8, v: i32, lim: &Limits) -> bool {
         if ch != lim.ch {
             return false;
@@ -336,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn unwraps_the_16_bit_counter() {
+    fn unwraps_the_low_16_bit_samples() {
         let a = Axis::new();
         let lim = open();
         a.observe(0, 65_000, &lim);
