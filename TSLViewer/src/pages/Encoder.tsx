@@ -142,12 +142,24 @@ export default function EncoderPage() {
     }
   }, [app.connected, frameBits]);
 
+  /**
+   * 角度实时回读开关：默认关闭。
+   * 这是「还没装丝杠、空轴手转验收」时才需要连续读；装上丝杆后关掉，免得白占链路带宽。
+   */
+  const [liveOn, setLiveOn] = useState(false);
+
   useEffect(() => {
-    void readLive();
     if (!app.connected) return;
+    if (!liveOn) return;
     const t = window.setInterval(() => void readLive(), 260);
     return () => window.clearInterval(t);
-  }, [app.connected, readLive]);
+  }, [app.connected, liveOn, readLive]);
+
+  // 关掉实时回读时，任务跑完补一次静态回读，保证「写入校验」表有数
+  useEffect(() => {
+    if (app.lastDone?.ok) void readLive();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.lastDone]);
 
   const payload: EncoderCfgPayload = useMemo(
     () => ({
@@ -398,10 +410,28 @@ export default function EncoderPage() {
               </tbody>
             </table>
           </Card>
-          <Card title="角度回读" sub="FEEDBACK · LIVE">
-            <div className="row" style={{ gap: 8 }}>
-              <Gauge angle={angleDeg} label="MECHANICAL" sub={`PHI_EXT_A = 0x${(live?.raw ?? 0).toString(16).toUpperCase().padStart(6, "0")}`} />
-              <Gauge angle={((live?.phiE ?? 0) / 65536) * 360} label="ELECTRICAL" sub={`PHI_E = ${live?.phiE ?? 0}`} />
+          <Card
+            title="角度回读"
+            sub="FEEDBACK · LIVE"
+            right={
+              <Button
+                size="sm"
+                variant={liveOn ? "danger" : "primary"}
+                disabled={!app.connected}
+                title={liveOn ? "当前：开启（正在连续回读）· 点击关闭" : "当前：关闭 · 点击开启连续回读"}
+                onClick={() => setLiveOn((v) => !v)}
+              >
+                {liveOn ? "关闭" : "开启"}
+              </Button>
+            }
+          >
+            <div className="grid cols-2" style={{ gap: 8 }}>
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <Gauge angle={angleDeg} label="MECHANICAL" sub={`PHI_EXT_A = 0x${(live?.raw ?? 0).toString(16).toUpperCase().padStart(6, "0")}`} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <Gauge angle={((live?.phiE ?? 0) / 65536) * 360} label="ELECTRICAL" sub={`PHI_E = ${live?.phiE ?? 0}`} />
+              </div>
             </div>
             <div className="divider" />
             <KV

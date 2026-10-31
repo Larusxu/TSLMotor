@@ -169,7 +169,6 @@ export const Icon = {
 
 export function Card({
   title,
-  sub,
   right,
   children,
   className = "",
@@ -188,10 +187,7 @@ export function Card({
     <section className={`card ${className}`}>
       {(title || right) && (
         <header className={`card-head ${bordered ? "bordered" : ""}`}>
-          <div className="grow">
-            {title && <div className="card-title">{title}</div>}
-            {sub && <div className="card-sub">{sub}</div>}
-          </div>
+          <div className="grow">{title && <div className="card-title">{title}</div>}</div>
           {right}
         </header>
       )}
