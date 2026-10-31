@@ -213,14 +213,6 @@ export default function EncoderPage() {
                 />
               </Field>
             </div>
-            {(preset.note || storage.note) && (
-              <div className="tiny muted">
-                {preset.note}
-                {preset.note && storage.note ? "；" : ""}
-                {storage.note}
-                {storage.pins ? `（${storage.pins}）` : ""}
-              </div>
-            )}
 
             <div className="grid cols-4" style={{ gap: 10 }}>
               <Field label="极对数" hint="PHI_E_MUL_FACTOR">
@@ -316,10 +308,6 @@ export default function EncoderPage() {
               <Check checked={firstCalib} onChange={(v) => setOffsetSrc(v ? "__calib" : "")}>
                 电角度偏置待标定（本次不写 0x242）
               </Check>
-            </div>
-            <div className="tiny muted">
-              本板接线：时钟 = ENC_A、数据 = ENC_B、片选 = ENC_N。勾上「片选接 ENC_N」才能读到角度；
-              取消会改走 HALL_W，这颗板子读到的角度恒为 0。
             </div>
             {writeVel && (
               <div className="row" style={{ gap: 10 }}>

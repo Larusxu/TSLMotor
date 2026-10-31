@@ -10,7 +10,6 @@
 export interface EncoderPreset {
   id: string;
   label: string;
-  note: string;
   frameBits: number;
   spiMode: number;
   spiHz: number;
@@ -25,7 +24,6 @@ export const ENCODER_PRESETS: EncoderPreset[] = [
   {
     id: "mt6701-14",
     label: "MT6701 · SSI 14-bit",
-    note: "",
     frameBits: 14,
     spiMode: 1,
     spiHz: 2_000_000,
@@ -37,7 +35,6 @@ export const ENCODER_PRESETS: EncoderPreset[] = [
   {
     id: "mt6701-24",
     label: "MT6701 · SSI 24-bit 完整帧",
-    note: "含 Mg 状态与 CRC-6；PHI_EXT_A 为 24 位原始字",
     frameBits: 24,
     spiMode: 1,
     spiHz: 2_000_000,
@@ -51,26 +48,20 @@ export const ENCODER_PRESETS: EncoderPreset[] = [
 export interface StoragePreset {
   id: string;
   label: string;
-  /** 占用哪两个引脚 —— 本板的 I²C 只能落在 HALL_U/HALL_V 上。 */
-  pins: string;
   /** 容量 / 接口，显示在下拉框右上角。 */
   spec: string;
-  note?: string;
 }
 
 /** 板上那颗存储芯片。选 "none" 表示板子上没有装。 */
 export const STORAGE_PRESETS: StoragePreset[] = [
   {
     id: "m24c02",
-    label: "M24C02-FMH6TG · 256 B",
-    pins: "SDA=HALL_U · SCL=HALL_V",
-    spec: "I²C EEPROM",
-    note: "启用后霍尔传感器与第二路反馈不可用",
+    label: "M24C02-FMH6TG · 256 字节",
+    spec: "I²C EEPROM · 2 Kbit",
   },
   {
     id: "none",
     label: "无 / 不使用",
-    pins: "",
     spec: "未装存储",
   },
 ];
