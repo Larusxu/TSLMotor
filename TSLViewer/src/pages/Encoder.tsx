@@ -260,11 +260,18 @@ export default function EncoderPage() {
                 />
               </Field>
               <Field label="SPI 模式" hint="CPOL/CPHA">
-                <SelectField
-                  value={spiMode}
-                  onChange={setSpiMode}
-                  options={[0, 1, 2, 3].map((v) => ({ value: v, label: `模式 ${v}` }))}
-                />
+                <div
+                  style={{ cursor: "not-allowed" }}
+                  onClick={() => app.toast("info", "SPI 模式为 MT6701 编码器固定配置")}
+                >
+                  <div style={{ pointerEvents: "none" }}>
+                    <SelectField
+                      value={spiMode}
+                      onChange={setSpiMode}
+                      options={[0, 1, 2, 3].map((v) => ({ value: v, label: `模式 ${v}` }))}
+                    />
+                  </div>
+                </div>
               </Field>
               <Field label="SCK 频率" hint={`half=${half} → ${(actualSck / 1e6).toFixed(2)} MHz`}>
                 <NumField value={spiHz} onChange={setSpiHz} min={117_188} max={3_000_000} step={100_000} unit="Hz" />
@@ -279,7 +286,14 @@ export default function EncoderPage() {
                 <HexField value={mask} disabled />
               </Field>
               <Field label="发送数据" hint="RESPONSE_1">
-                <HexField value={sendData} onChange={setSendData} />
+                <div
+                  style={{ cursor: "not-allowed" }}
+                  onClick={() => app.toast("info", "发送数据为 MT6701 编码器固定配置")}
+                >
+                  <div style={{ pointerEvents: "none" }}>
+                    <HexField value={sendData} />
+                  </div>
+                </div>
               </Field>
               <Field label="PWM MAX_COUNT" hint="fPWM = 120 MHz / n">
                 <NumField value={pwmCount} onChange={(v) => { setPwmCount(v); app.setCal({ pwmMaxCount: v }); }} min={600} max={20000} step={10} />

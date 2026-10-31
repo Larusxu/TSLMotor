@@ -333,6 +333,7 @@ export function HexField({
         className="mono"
         value={text}
         disabled={disabled}
+        readOnly={!onChange}
         onFocus={() => setFocus(true)}
         onBlur={() => {
           setFocus(false);
