@@ -23,7 +23,7 @@ export interface EncoderPreset {
 export const ENCODER_PRESETS: EncoderPreset[] = [
   {
     id: "mt6701-14",
-    label: "MT6701 · SSI 14-bit",
+    label: "MT6701 · SSI 14-bit - ENC_N",
     frameBits: 14,
     spiMode: 1,
     spiHz: 2_000_000,
@@ -34,7 +34,7 @@ export const ENCODER_PRESETS: EncoderPreset[] = [
   },
   {
     id: "mt6701-24",
-    label: "MT6701 · SSI 24-bit 完整帧",
+    label: "MT6701 · SSI 24-bit 完整帧 - ENC_N",
     frameBits: 24,
     spiMode: 1,
     spiHz: 2_000_000,
@@ -56,7 +56,7 @@ export interface StoragePreset {
 export const STORAGE_PRESETS: StoragePreset[] = [
   {
     id: "m24c02",
-    label: "M24C02-FMH6TG · 256 字节",
+    label: "M24C02-FMH6TG · 256 字节 - HALL_N",
     spec: "I²C EEPROM · 2 Kbit",
   },
   {

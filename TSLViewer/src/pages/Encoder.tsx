@@ -77,7 +77,8 @@ export default function EncoderPage() {
   const [spiHz, setSpiHz] = useState(preset.spiHz);
   const [idle, setIdle] = useState(preset.idleCycles);
   const [sendData, setSendData] = useState(parseInt(preset.sendData, 16));
-  const [csnEncN, setCsnEncN] = useState(preset.csnViaEncN);
+  /** 片选固定走 ENC_N（本板硬接线），不再做成开关。 */
+  const csnEncN = preset.csnViaEncN;
   const [cpr, setCpr] = useState(app.cal.cpr);
   const [poles, setPoles] = useState(app.cal.poles);
   const [offset, setOffset] = useState(app.cal.poles ? 48000 - 1 : 48000);
@@ -105,7 +106,6 @@ export default function EncoderPage() {
     setSpiHz(p.spiHz);
     setIdle(p.idleCycles);
     setSendData(parseInt(p.sendData, 16));
-    setCsnEncN(p.csnViaEncN);
     setCpr(p.cpr);
     app.setCal({ cpr: p.cpr });
   };
@@ -299,9 +299,6 @@ export default function EncoderPage() {
             </div>
 
             <div className="row" style={{ gap: 14, flexWrap: "nowrap", whiteSpace: "nowrap" }}>
-              <Check checked={csnEncN} onChange={setCsnEncN}>
-                片选（CS）接在 ENC_N 引脚
-              </Check>
               <Check checked={writeVel} onChange={setWriteVel}>
                 同时写入测速配置
               </Check>
@@ -380,7 +377,7 @@ export default function EncoderPage() {
             <Notice tone={live && live.raw !== 0 ? "ok" : "warn"}>
               {live && live.raw !== 0
                 ? "已读到角度：用手转一圈，机械角应从 0° 走到 360° 再回 0°。"
-                : "PHI_EXT_A 为 0：检查 SCK/SDO/CSN 接线、片选引脚选择与预置数据。"}
+                : "PHI_EXT_A 为 0：检查 SCK/SDO/CSN 接线与预置数据。"}
             </Notice>
           </Card>
 
