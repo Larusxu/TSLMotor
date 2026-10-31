@@ -185,8 +185,7 @@ export interface PidCfgPayload {
   counts_per_rpm: number;
 }
 
-export interface CalibCfgPayload {
-  flux_ma: number;
+export interface CalibCfgPayload {  flux_ma: number;
   poles: number;
   settle_ms: number;
   step_deg: number;
@@ -264,4 +263,63 @@ export interface LimitEvent {
   max: number;
   action: string;
   at: number;
+}
+// --------------------------------------------------------------- EEPROM 存储
+
+/** 与 Rust `storage::StoreParams` 一一对应（字段顺序即 EEPROM 载荷顺序）。 */
+export interface StoreParams {
+  cpr: number;
+  poles: number;
+  csa_gain: number;
+  pwm_max_count: number;
+  phi_e_offset: number;
+  torque_limit_ma: number;
+  flux_limit_ma: number;
+  vel_limit_rpm: number;
+  uq_ud_limit: number;
+  cur_p: number;
+  cur_i: number;
+  vel_p: number;
+  vel_i: number;
+  pos_p: number;
+  pos_i: number;
+  /** bit0 = 电角度已标定 */
+  flags: number;
+  motor_id: number;
+  axis_origin: number;
+  axis_min: number;
+  axis_max: number;
+  lead_um: number;
+  counts_per_rpm_x10: number;
+  ma_per_count_ua: number;
+}
+
+export interface EepromProbe {
+  ok: boolean;
+  i2c_hz: number;
+  matrix_before: number;
+  matrix_after: number;
+  addr: number;
+  saved: number;
+  written: [number, number];
+  read_back: [number, number];
+  message: string;
+}
+
+export interface EepromSave {
+  seq: number;
+  block: string;
+  bytes_written: number;
+  verified: boolean;
+  elapsed_ms: number;
+}
+
+export interface EepromLoad {
+  found: boolean;
+  block: string;
+  seq: number;
+  crc_a: boolean;
+  crc_b: boolean;
+  params: StoreParams | null;
+  message: string;
 }

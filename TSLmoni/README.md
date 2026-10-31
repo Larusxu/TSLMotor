@@ -55,6 +55,8 @@ cargo run --release --bin tslmoni -- --rpc        # 十六进制报文服务器
 | RX 环 | 每节点 2048 B，溢出锁存 → `MOTO_READ` 返回 `MOTO_OVERFLOW`，`MOTO_CLEAR` 复位 |
 | 线路格式 | `main485` Modbus-RTU、`maincan` USB-CAN-A 分片（id 0x0600/0x0580，6 字节/帧）、`direct` 原始 TMC 数据报 |
 | 电机侧 | 10-bit 寄存器全量读写、`CHIP.ID=0x64600001`、PWM_PERIOD 4800（25 kHz）、速度/位置/力矩模式简单动力学、RTMI 帧按 `UART.CONTROL` 采样率与 `RTMI_CH_x` 映射合成 |
+| I/O 控制器 | `SPI_ENC` 起停回显 + 按转子相位合成 `PHI_EXT_A`；`I2C_INIT_PP/OD`、`I2C_READ/WRITE`、`I2C_EEPROM`、`RAM_READ/WRITE` |
+| 板载 EEPROM | M24C02 仿真：256 B 镜像（擦除态 0xFF），`Simulator::new_persistent()` 时每个电机存到 `<temp>/tslmoni-eeprom-<n>.bin`，断开重连不丢 |
 
 **不做真实 FOC/电流环物理**：阶跃响应、PID 辨识看到的是合成波形，不能作为调参依据。
 

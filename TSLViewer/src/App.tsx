@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AppProvider, useApp } from "./lib/app-store";
 import { api, HAS_TAURI } from "./lib/api";
@@ -17,11 +17,21 @@ import Tuning from "./pages/Tuning";
 import Registers from "./pages/Registers";
 import Sequence from "./pages/Sequence";
 import Logs from "./pages/Logs";
+import Storage from "./pages/Storage";
 
-type Page = "overview" | "encoder" | "align" | "axis" | "tuning" | "registers" | "sequence" | "logs";
+type Page =
+  | "overview"
+  | "encoder"
+  | "align"
+  | "axis"
+  | "tuning"
+  | "storage"
+  | "registers"
+  | "sequence"
+  | "logs";
 
 /** Pages that only matter while commissioning; hidden in production mode. */
-const OP_ONLY = new Set<Page>(["encoder", "align", "axis", "tuning", "registers"]);
+const OP_ONLY = new Set<Page>(["encoder", "align", "axis", "tuning", "storage", "registers"]);
 
 const NAV: {
   group: string;
@@ -40,6 +50,7 @@ const NAV: {
     group: "调校",
     items: [
       { id: "tuning", label: "PID 与限幅", hint: "TUNE", icon: <Icon.Tuning /> },
+      { id: "storage", label: "板载存储", hint: "EEPROM", icon: <Icon.Save /> },
       { id: "registers", label: "寄存器", hint: "MAP", icon: <Icon.Registers /> },
     ],
   },
@@ -77,6 +88,11 @@ const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
     title: "PID 与限幅",
     desc: "三级级联参数、单位换算与阶跃响应实测。电流归一化选错会让增益差 256 倍。",
     crumb: "TUNING",
+  },
+  storage: {
+    title: "板载存储",
+    desc: "把标定值写进板上的 M24C02 EEPROM：掉电不丢，换 PC 不用重新对齐。",
+    crumb: "EEPROM",
   },
   registers: {
     title: "寄存器",
@@ -290,6 +306,7 @@ function Shell() {
             {page === "align" && <Align />}
             {page === "axis" && <Axis />}
             {page === "tuning" && <Tuning />}
+            {page === "storage" && <Storage />}
             {page === "registers" && <Registers />}
             {page === "sequence" && <Sequence />}
             {page === "logs" && <Logs />}

@@ -1,4 +1,4 @@
-//! TSLHand simulator CLI.
+﻿//! TSLHand simulator CLI.
 //!
 //! ```text
 //! tslmoni --selftest              # run the built-in protocol self check
@@ -118,8 +118,7 @@ fn selftest() -> i32 {
         "ALL_OFF 清空掩码",
     );
 
-    let mut can = Simulator::new("maincan", 1);
-    pass &= expect(
+    let mut can = Simulator::new("maincan", 1);    pass &= expect(
         packet(&mut can, 13, 0, OP_INFO, &[]).map(|r| r[5]) == Some(4),
         "maincan 通道可用",
     );
@@ -139,6 +138,46 @@ fn selftest() -> i32 {
     pass &= expect(
         n == 6 && u32::from_be_bytes([b[2], b[3], b[4], b[5]]) == 4321,
         "direct 模式原始 TMC 数据报读写",
+    );
+
+    // M24C02 behind the I/O controller I²C master: INIT_OD -> WRITE -> READ.
+    let mut ee = Simulator::new("direct", 1);
+    ee.write(&write_request(0x381, 0xAA02_0095));
+    ee.clear();
+    ee.write(&write_request(0x381, 0xE010_005A)); // I2C_WRITE addr 0x10 = 0x5A
+    ee.clear();
+    ee.write(&write_request(0x381, 0xD010_0000)); // I2C_READ  addr 0x10
+    ee.clear();
+    ee.write(&read_request(0x383));
+    let mut e = [0u8; 6];
+    let mut m = 0;
+    for _ in 0..20 {
+        m += ee.read(&mut e[m..]);
+        if m == 6 {
+            break;
+        }
+    }
+    pass &= expect(
+        m == 6 && u32::from_be_bytes([e[2], e[3], e[4], e[5]]) & 0xFF == 0x5A,
+        "EEPROM I2C_WRITE/READ 回读一致",
+    );
+    ee.clear();
+    ee.write(&write_request(0x381, 0xAA03_0000)); // I2C_EEPROM -> I/O RAM
+    ee.clear();
+    ee.write(&write_request(0x381, 0xC008_0000)); // RAM_READ word 8 = byte 0x10/0x11
+    ee.clear();
+    ee.write(&read_request(0x383));
+    let mut r = [0u8; 6];
+    let mut k = 0;
+    for _ in 0..20 {
+        k += ee.read(&mut r[k..]);
+        if k == 6 {
+            break;
+        }
+    }
+    pass &= expect(
+        k == 6 && u32::from_be_bytes([r[2], r[3], r[4], r[5]]) >> 8 & 0xFF == 0x5A,
+        "I2C_EEPROM 整片载入 RAM 后 RAM_READ 可读",
     );
 
     let mut rtmi = Simulator::new("main485", 1);

@@ -17,6 +17,7 @@
 //!   firmware host test double.
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 /// Port name a host app may offer in its picker.
@@ -24,6 +25,10 @@ pub const PORT_NAME: &str = "SIM1";
 
 const MOTORS: usize = 16;
 const REGS: usize = 1024;
+/// M24C02: 2 Kbit = 256 bytes behind the I/O controller's I²C master.
+const EEPROM_LEN: usize = 256;
+/// I/O controller RAM (`1024 × 16-bit`), target of the `I2C_EEPROM` feature.
+const IO_RAM_WORDS: usize = 1024;
 /// Firmware RX ring per motor (`RING` in los_moto.c).
 const RING: usize = 2048;
 /// Board snapshot length (`q[7]+q[8]<=256` in los_moto.c).
@@ -110,6 +115,11 @@ mod regs {
     pub const UART_CONTROL: u16 = 0x340;
     pub const UART_RTMI_CH_BASE: u16 = 0x344;
     pub const MCC_PWM_PERIOD: u16 = 0x103;
+    // I/O controller + feedback registers used by the encoder / EEPROM paths.
+    pub const FEEDBACK_PHI_EXT_A: u16 = 0x24D;
+    pub const IO_COMMAND: u16 = 0x381;
+    pub const IO_RESPONSE_0: u16 = 0x382;
+    pub const IO_RESPONSE_1: u16 = 0x383;
     pub const MODE_PWM_OFF: u32 = 0;
     pub const MODE_TORQUE: u32 = 2;
     pub const MODE_VELOCITY: u32 = 3;
@@ -220,10 +230,18 @@ struct Motor {
     phase: f64,
     rtmi_acc: f64,
     write_cnt: u8,
+    /// M24C02 behind the I/O controller's I²C master (256 bytes, 0xFF erased).
+    eeprom: [u8; EEPROM_LEN],
+    /// 1024 × 16-bit I/O controller RAM (`I2C_EEPROM` dumps the EEPROM here).
+    io_ram: [u16; IO_RAM_WORDS],
+    /// Last I²C clock programmed through `I2C_INIT_PP/OD`; `None` = not initialised.
+    i2c_hz: Option<u32>,
+    /// When set, the EEPROM image is mirrored to this file so it survives restarts.
+    eeprom_path: Option<PathBuf>,
 }
 
 impl Motor {
-    fn new() -> Self {
+    fn new(index: usize, eeprom_path: Option<PathBuf>) -> Self {
         let mut regs = [0u32; REGS];
         regs[regs::CHIP_ID as usize] = 0x6460_0001;
         regs[regs::CHIP_VARIANT as usize] = 0x0001;
@@ -232,6 +250,15 @@ impl Motor {
         regs[regs::MCC_PWM_PERIOD as usize] = regs::mcc_pwm_period(4800);
         regs[regs::ADC_TEMP_RAW as usize] = 0x0A20;
         regs[regs::ADC_VM_I3_RAW as usize] = 0x0B40;
+        let mut eeprom = [0xFFu8; EEPROM_LEN];
+        if let Some(p) = &eeprom_path {
+            if let Ok(bytes) = std::fs::read(p) {
+                if bytes.len() == EEPROM_LEN {
+                    eeprom.copy_from_slice(&bytes);
+                }
+            }
+        }
+        let _ = index;
         Self {
             regs,
             rx: VecDeque::new(),
@@ -241,6 +268,10 @@ impl Motor {
             phase: 0.0,
             rtmi_acc: 0.0,
             write_cnt: 0,
+            eeprom,
+            io_ram: [0; IO_RAM_WORDS],
+            i2c_hz: None,
+            eeprom_path,
         }
     }
 
@@ -248,6 +279,68 @@ impl Motor {
         if (addr as usize) < REGS {
             self.regs[addr as usize] = v;
         }
+        if addr == regs::IO_COMMAND {
+            self.io_command(v);
+        }
+    }
+
+    /// Mirror of the TMC6460 I/O controller ROM features we care about:
+    /// `I2C_INIT_PP/OD`, `I2C_READ`, `I2C_WRITE`, `I2C_EEPROM`, `RAM_READ`,
+    /// `RAM_WRITE` and the `SPI_ENC` start/stop echoes.
+    fn io_command(&mut self, cmd: u32) {
+        match cmd >> 24 {
+            0xAA => {
+                match (cmd >> 16) & 0xFF {
+                    0x01 | 0x02 => {
+                        self.i2c_hz = Some(60_000_000 / 4 / ((cmd & 0xFFFF) + 1));
+                    }
+                    0x03 => {
+                        // EEPROM → I/O controller RAM, two bytes per word.
+                        for i in 0..(EEPROM_LEN / 2) {
+                            let hi = self.eeprom[i * 2] as u16;
+                            let lo = self.eeprom[i * 2 + 1] as u16;
+                            self.io_ram[i] = (hi << 8) | lo;
+                        }
+                    }
+                    _ => {}
+                }
+                self.regs[regs::IO_RESPONSE_0 as usize] = cmd;
+            }
+            0xD0 => {
+                let addr = ((cmd >> 16) & 0x0FFF) as usize & (EEPROM_LEN - 1);
+                self.regs[regs::IO_RESPONSE_1 as usize] = self.eeprom[addr] as u32;
+                self.regs[regs::IO_RESPONSE_0 as usize] = cmd;
+            }
+            0xE0 => {
+                let addr = ((cmd >> 16) & 0x0FFF) as usize & (EEPROM_LEN - 1);
+                self.eeprom[addr] = (cmd & 0xFF) as u8;
+                self.persist_eeprom();
+                self.regs[regs::IO_RESPONSE_0 as usize] = cmd;
+            }
+            0xC0 => {
+                let addr = ((cmd >> 16) & 0x03FF) as usize;
+                self.regs[regs::IO_RESPONSE_1 as usize] = self.io_ram[addr] as u32;
+                self.regs[regs::IO_RESPONSE_0 as usize] = cmd;
+            }
+            0xB0 => {
+                let addr = ((cmd >> 16) & 0x03FF) as usize;
+                self.io_ram[addr] = (cmd & 0xFFFF) as u16;
+                self.regs[regs::IO_RESPONSE_0 as usize] = cmd;
+            }
+            0xF0 => {
+                // SPI_ENC: accept start and stop, the angle itself is synthesised
+                // in `step` from the rotor phase.
+                self.regs[regs::IO_RESPONSE_0 as usize] = cmd;
+            }
+            _ => {
+                self.regs[regs::IO_RESPONSE_0 as usize] = cmd;
+            }
+        }
+    }
+
+    fn persist_eeprom(&self) {
+        let Some(p) = &self.eeprom_path else { return };
+        let _ = std::fs::write(p, self.eeprom);
     }
 
     fn get(&self, addr: u16) -> u32 {
@@ -308,10 +401,14 @@ struct Device {
 }
 
 impl Device {
-    fn new(motor: u8) -> Self {
+    /// `eeprom_dir = Some(dir)` keeps each motor's EEPROM image in
+    /// `<dir>/tslmoni-eeprom-<n>.bin`, so writes survive a reconnect.
+    fn with_eeprom_dir(motor: u8, eeprom_dir: Option<PathBuf>) -> Self {
         let now = Instant::now();
         Self {
-            motors: (0..MOTORS).map(|_| Motor::new()).collect(),
+            motors: (0..MOTORS)
+                .map(|i| Motor::new(i, eeprom_dir.as_ref().map(|d| d.join(format!("tslmoni-eeprom-{}.bin", i + 1)))))
+                .collect(),
             focus: (motor.clamp(1, MOTORS as u8)) as usize - 1,
             power: [0; 4],
             hand_id: 1,
@@ -578,6 +675,12 @@ impl Device {
         m.set(regs::FEEDBACK_VELOCITY_PER, vel as u32);
         m.set(regs::FEEDBACK_PHI_CONVERTED, (m.phase as i32) as u32);
         m.set(regs::FEEDBACK_PHI_E, (m.phase as i32) as u32);
+        // 14-bit MT6701 frame synthesised from the rotor phase, so the encoder
+        // page shows a live angle in simulation.
+        m.set(
+            regs::FEEDBACK_PHI_EXT_A,
+            (m.phase.rem_euclid(16384.0)) as u32 & 0x3FFF,
+        );
         m.set(regs::FOC_FOC_IQ_ID, torque as u32);
         m.set(regs::FOC_FOC_UQ_UD, (torque / 2) as u32);
         m.set(regs::ADC_TEMP_RAW, (0x0A20i32 + noise as i32 / 8) as u32);
@@ -639,8 +742,18 @@ pub struct Simulator {
 
 impl Simulator {
     pub fn new(mode: &str, motor: u8) -> Self {
+        Self::with_eeprom_dir(mode, motor, None)
+    }
+
+    /// Simulator whose EEPROM images persist in the system temp directory, so
+    /// a saved parameter block is still there after reconnecting.
+    pub fn new_persistent(mode: &str, motor: u8) -> Self {
+        Self::with_eeprom_dir(mode, motor, Some(std::env::temp_dir()))
+    }
+
+    fn with_eeprom_dir(mode: &str, motor: u8, dir: Option<PathBuf>) -> Self {
         Self {
-            dev: Device::new(motor),
+            dev: Device::with_eeprom_dir(motor, dir),
             mode: Mode::parse(mode),
             inbuf: Vec::new(),
             can_seq: None,

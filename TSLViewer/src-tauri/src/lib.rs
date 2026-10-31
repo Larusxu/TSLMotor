@@ -11,6 +11,7 @@ mod procs;
 mod proto;
 mod regs;
 mod simport;
+mod storage;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -117,8 +118,7 @@ fn write_reg(state: State<'_, AppState>, addr: u16, value: u32, verify: bool) ->
 }
 
 #[derive(Serialize)]
-struct SnapItem {
-    addr: u16,
+struct SnapItem {    addr: u16,
     value: Option<u32>,
     error: Option<String>,
 }
@@ -321,6 +321,51 @@ fn cancel_job(state: State<'_, AppState>) {
     state.link.log("warn", "job", "已请求取消当前任务");
 }
 
+// ------------------------------------------------------------ EEPROM storage
+
+#[tauri::command(async)]
+fn eeprom_probe(state: State<'_, AppState>) -> Result<storage::Probe, String> {
+    if !state.link.is_connected() {
+        return Err("串口未连接".into());
+    }
+    storage::probe(&state.link).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn eeprom_dump(state: State<'_, AppState>) -> Result<Vec<u8>, String> {
+    if !state.link.is_connected() {
+        return Err("串口未连接".into());
+    }
+    storage::dump(&state.link).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn eeprom_save(
+    state: State<'_, AppState>,
+    params: storage::StoreParams,
+) -> Result<storage::SaveInfo, String> {
+    if !state.link.is_connected() {
+        return Err("串口未连接".into());
+    }
+    storage::save(&state.link, &params).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn eeprom_load(state: State<'_, AppState>) -> Result<storage::LoadInfo, String> {
+    if !state.link.is_connected() {
+        return Err("串口未连接".into());
+    }
+    storage::load(&state.link).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn eeprom_erase(state: State<'_, AppState>) -> Result<usize, String> {
+    if !state.link.is_connected() {
+        return Err("串口未连接".into());
+    }
+    storage::erase(&state.link).map_err(|e| e.to_string())
+}
+
 /// Run one of the blocking procedures on a worker thread.
 #[tauri::command]
 fn run_job(
@@ -506,7 +551,12 @@ pub fn run() {
             read_pid,
             job_busy,
             cancel_job,
-            run_job
+            run_job,
+            eeprom_probe,
+            eeprom_dump,
+            eeprom_save,
+            eeprom_load,
+            eeprom_erase
         ])
         .run(tauri::generate_context!())
         .expect("error while running TSL Viewer");

@@ -26,7 +26,9 @@ struct SimWire {
 impl SimWire {
     fn new(mode: &str, motor: u8) -> Self {
         Self {
-            sim: RefCell::new(Simulator::new(mode, motor)),
+            // Persistent EEPROM images: a parameter block saved in simulation is
+            // still there after reconnecting (see `tslmoni::Simulator::new_persistent`).
+            sim: RefCell::new(Simulator::new_persistent(mode, motor)),
         }
     }
 }

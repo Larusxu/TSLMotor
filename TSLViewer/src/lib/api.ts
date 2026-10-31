@@ -26,6 +26,10 @@ import type {
   StepCfgPayload,
   StepResult,
   TmcProbe,
+  StoreParams,
+  EepromProbe,
+  EepromSave,
+  EepromLoad,
 } from "./types";
 
 export const HAS_TAURI =
@@ -77,8 +81,7 @@ const real = {
   axisMove: (cfg: MoveCfgPayload) => invoke<AxisState>("axis_move", { cfg }),
   axisHold: (poles: number) => invoke<AxisState>("axis_hold", { poles }),
   axisClear: () => invoke<AxisState>("axis_clear"),
-  logs: () => invoke<LogLine[]>("get_logs"),
-  clearLogs: () => invoke<void>("clear_logs"),
+  logs: () => invoke<LogLine[]>("get_logs"),  clearLogs: () => invoke<void>("clear_logs"),
   reportsPath: () => invoke<string>("reports_path"),
   openReportsDir: () => invoke<void>("open_reports_dir"),
   suggestPi: (rOhm: number, lUh: number, bandwidthHz: number, fPwm: number) =>
@@ -87,6 +90,11 @@ const real = {
   jobBusy: () => invoke<boolean>("job_busy"),
   cancelJob: () => invoke<void>("cancel_job"),
   runJob: (kind: string, payload: unknown) => invoke<void>("run_job", { kind, payload }),
+  eepromProbe: () => invoke<EepromProbe>("eeprom_probe"),
+  eepromDump: () => invoke<number[]>("eeprom_dump"),
+  eepromSave: (params: StoreParams) => invoke<EepromSave>("eeprom_save", { params }),
+  eepromLoad: () => invoke<EepromLoad>("eeprom_load"),
+  eepromErase: () => invoke<number>("eeprom_erase"),
 };
 
 // ---------------------------------------------------------------------------
@@ -131,6 +139,10 @@ const mock = (() => {
   const regCache = new Map<number, number>();
   const mockPower=[0,0,0,0];
   let mockHandId=1;
+  // ---- M24C02 behind the I/O controller (browser preview only) ------------
+  const mockEeprom = new Uint8Array(256).fill(0xff);
+  let mockParams: StoreParams | null = null;
+  let mockSeq = 0;
 
   // ---- travel guard simulation -------------------------------------------
   let axisLimits: AxisLimits = { enabled: false, ch: 0, min: 0, max: 65535, action: "loose" };
@@ -561,6 +573,65 @@ const mock = (() => {
     },
     async runJob(kind: string, payload: unknown) {
       runJob(kind, payload);
+    },
+    async eepromProbe(): Promise<EepromProbe> {
+      await delay(120);
+      if (!connected) throw new Error("串口未连接");
+      return {
+        ok: true,
+        i2c_hz: 100_000,
+        matrix_before: 0x0000_703f,
+        matrix_after: 0x0000_71bf,
+        addr: 0xfe,
+        saved: mockEeprom[0xfe],
+        written: [0xa5, 0x5a],
+        read_back: [0xa5, 0x5a],
+        message: "EEPROM 可读可写（模拟）",
+      };
+    },
+    async eepromDump(): Promise<number[]> {
+      await delay(80);
+      if (!connected) throw new Error("串口未连接");
+      return Array.from(mockEeprom);
+    },
+    async eepromSave(params: StoreParams): Promise<EepromSave> {
+      await delay(400);
+      if (!connected) throw new Error("串口未连接");
+      mockParams = { ...params };
+      mockSeq = (mockSeq + 1) & 0xffff;
+      // 只写头 + seq，内容留 0xFF：浏览器的十六进制视图主要是给布局用的。
+      const enc = new TextEncoder().encode("TSL1");
+      for (const base of [0x00, 0x70]) {
+        mockEeprom.fill(0xff, base, base + 112);
+        mockEeprom.set(enc, base);
+        mockEeprom[base + 4] = 1;
+        mockEeprom[base + 5] = 92;
+        mockEeprom[base + 6] = mockSeq & 0xff;
+        mockEeprom[base + 7] = (mockSeq >> 8) & 0xff;
+        mockEeprom[base + 100] = 0x5a; // 占位 CRC，模拟层不校验
+      }
+      log("info", "storage", `参数块写入 EEPROM（模拟，seq=${mockSeq}）`);
+      return { seq: mockSeq, block: "A+B", bytes_written: 224, verified: true, elapsed_ms: 380 };
+    },
+    async eepromLoad(): Promise<EepromLoad> {
+      await delay(120);
+      if (!connected) throw new Error("串口未连接");
+      return {
+        found: mockParams !== null,
+        block: mockParams ? "A" : "—",
+        seq: mockSeq,
+        crc_a: mockParams !== null,
+        crc_b: mockParams !== null,
+        params: mockParams,
+        message: mockParams ? `有效参数块（A，seq=${mockSeq}）` : "未找到有效参数块（模拟）",
+      };
+    },
+    async eepromErase(): Promise<number> {
+      await delay(120);
+      if (!connected) throw new Error("串口未连接");
+      mockParams = null;
+      mockEeprom.fill(0xff);
+      return 8;
     },
     async sequence(cfg: SeqCfgPayload): Promise<SeqResult> {
       const job = `sequence:${Date.now()}`;
