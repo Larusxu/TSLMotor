@@ -525,6 +525,13 @@ pub struct CalibCfg {
     pub ma_per_count: f64,
     pub write_back: bool,
     pub dry_run: bool,
+    /// Encoder CPR — 决定 16 位换算比例 `CPR_INV >> 8 = 65536 / CPR`（14 bit → ×4）。
+    #[serde(default = "default_cpr")]
+    pub cpr: u32,
+}
+
+fn default_cpr() -> u32 {
+    16_384
 }
 
 impl Default for CalibCfg {
@@ -538,6 +545,7 @@ impl Default for CalibCfg {
             ma_per_count: 0.20131,
             write_back: true,
             dry_run: false,
+            cpr: 16_384,
         }
     }
 }
@@ -689,12 +697,21 @@ pub fn calibrate_phi_e(ctx: &mut Ctx, cfg: &CalibCfg, frame_bits: u32) -> Result
     // 6. fit
     let label = "拟合电角度偏移";
     ctx.begin(label);
-    let fit = fit_offset(&points, cfg.step_deg);
+    // 16 位换算比例：converted = raw × (CPR_INV >> 8) = raw × 65536 / CPR（14 bit + CPR=16384 → ×4）
+    let scale = 65_536.0 / cfg.cpr.max(1) as f64;
+    let fit = fit_offset(&points, scale, cfg.poles.max(1));
     let result = match fit {
         Some(r) => {
             ctx.ok(
                 label,
-                format!("R²={:.5} · 0° 时 enc={:.1} → offset 0x{:04X}", r.r2, r.intercept.rem_euclid(16384.0), r.offset),
+                format!(
+                    "R²={:.5} · 0° 时 enc={:.1} → offset 0x{:04X}（raw×{:.0}×{})",
+                    r.r2,
+                    r.intercept.rem_euclid(cfg.cpr.max(1) as f64),
+                    r.offset,
+                    scale,
+                    cfg.poles.max(1)
+                ),
             );
             r
         }
@@ -746,7 +763,13 @@ struct FitResult {
     groups: Vec<CalibGroup>,
 }
 
-fn fit_offset(points: &[CalibPoint], step_deg: i32) -> Option<FitResult> {
+/// 拟合电角度偏移。
+///
+/// `scale` = 16 位换算比例（`CPR_INV >> 8` = 65536/CPR），`poles` = 极对数。
+/// 手册的 phi_e 链路是 `PHI_E = 换算后的 16 位机械角 × PHI_E_MUL_FACTOR + PHI_E_OFFSET`，
+/// 所以让 `PHI_E` 等于开环目标角的偏移应是
+/// `OFFSET = target16 − converted × poles`（对全扫描点取圆周平均，即手册说的"平均差值"）。
+fn fit_offset(points: &[CalibPoint], scale: f64, poles: u32) -> Option<FitResult> {
     // group by deg % 360
     let mut bins: Vec<(i32, Vec<f64>)> = Vec::new();
     let mut keys: Vec<i32> = points
@@ -810,7 +833,7 @@ fn fit_offset(points: &[CalibPoint], step_deg: i32) -> Option<FitResult> {
     let r2 = if ss_tot > 0.0 { 1.0 - ss_res / ss_tot } else { 0.0 };
 
     let b14 = intercept.rem_euclid(16384.0);
-    let offset = ((-b14).round() as i64).rem_euclid(65536) as u32;
+    let offset = phi_e_offset_from(points, scale, poles);
 
     let groups = bins
         .iter()
@@ -834,7 +857,7 @@ fn fit_offset(points: &[CalibPoint], step_deg: i32) -> Option<FitResult> {
         })
         .collect();
 
-    let _ = step_deg;
+    let _ = b14;
     Some(FitResult {
         offset,
         intercept,
@@ -842,6 +865,28 @@ fn fit_offset(points: &[CalibPoint], step_deg: i32) -> Option<FitResult> {
         r2,
         groups,
     })
+}
+
+/// `OFFSET = target16 − converted × poles`，对全部扫描点做圆周平均（手册 p.70 的"平均差值"法）。
+fn phi_e_offset_from(points: &[CalibPoint], scale: f64, poles: u32) -> u32 {
+    let mut sum_sin = 0.0;
+    let mut sum_cos = 0.0;
+    let mut n = 0.0;
+    for p in points {
+        let target16 = (p.deg.rem_euclid(360) as f64 / 360.0 * 65_536.0).round();
+        let converted = scale * p.enc as f64 * poles as f64;
+        let diff = (target16 - converted).rem_euclid(65_536.0); // 0 … 65536
+        let rad = diff / 65_536.0 * std::f64::consts::TAU;
+        sum_sin += rad.sin();
+        sum_cos += rad.cos();
+        n += 1.0;
+    }
+    if n == 0.0 {
+        return 0;
+    }
+    let mean_rad = sum_sin.atan2(sum_cos);
+    let mean = mean_rad.rem_euclid(std::f64::consts::TAU) / std::f64::consts::TAU * 65_536.0;
+    (mean.round() as i64).rem_euclid(65_536) as u32
 }
 
 // --------------------------------------------------------------------------
@@ -1555,4 +1600,46 @@ fn local_offset_minutes() -> i32 {
 #[cfg(not(windows))]
 fn local_offset_minutes() -> i32 {
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn enc_for(deg_e: i32, poles: u32, cpr: u32, b: i64) -> i32 {
+        // 机械角 = 电角度 / 极对数；编码器 = 机械角占一圈的比例 × CPR
+        let mech = deg_e as f64 / poles.max(1) as f64;
+        let raw = (mech / 360.0 * cpr as f64).round() as i64;
+        (raw + b).rem_euclid(cpr as i64) as i32
+    }
+
+    fn make_points(poles: u32, cpr: u32, b: i64) -> Vec<CalibPoint> {
+        (0..=720)
+            .step_by(90)
+            .map(|d| CalibPoint { deg: d, enc: enc_for(d, poles, cpr, b) })
+            .collect()
+    }
+
+    #[test]
+    fn offset_uses_16bit_scaling_not_raw_counts() {
+        // 14 bit / CPR 16384 → 换算比例 4；0° 时编码器读到 1000
+        // PHI_E = raw×4×poles + OFFSET ⇒ OFFSET = −4000 = 0xF060
+        let pts = make_points(1, 16_384, 1000);
+        let off = phi_e_offset_from(&pts, 65536.0 / 16_384.0, 1);
+        assert_eq!(off, (-4_000i64).rem_euclid(65_536) as u32);
+    }
+
+    #[test]
+    fn offset_zero_when_already_aligned() {
+        let pts = make_points(1, 16_384, 0);
+        assert_eq!(phi_e_offset_from(&pts, 4.0, 1), 0);
+    }
+
+    #[test]
+    fn offset_respects_pole_pairs() {
+        // 极对数 2、0° 时编码器读到 500：OFFSET = −(4×500×2) = 0xF060
+        let pts = make_points(2, 16_384, 500);
+        let off = phi_e_offset_from(&pts, 4.0, 2);
+        assert_eq!(off, (-4_000i64).rem_euclid(65_536) as u32);
+    }
 }

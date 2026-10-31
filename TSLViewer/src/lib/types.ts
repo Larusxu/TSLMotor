@@ -194,6 +194,8 @@ export interface CalibCfgPayload {
   ma_per_count: number;
   write_back: boolean;
   dry_run: boolean;
+  /** 编码器 CPR，决定 16 位换算比例 65536/CPR（16384 → ×4） */
+  cpr: number;
 }
 
 export interface StepCfgPayload {

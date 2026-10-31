@@ -53,6 +53,7 @@ export default function AlignPage() {
     ma_per_count: app.cal.maPerCount,
     write_back: writeBack,
     dry_run: dryRun,
+    cpr: app.cal.cpr,
   };
 
   const fluxCounts = countsFromMa(fluxMa, app.cal.maPerCount);
