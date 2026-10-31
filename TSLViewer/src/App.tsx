@@ -14,6 +14,7 @@ import Encoder from "./pages/Encoder";
 import Homing from "./pages/Homing";
 import Axis from "./pages/Axis";
 import Tuning from "./pages/Tuning";
+import LoopTest from "./pages/LoopTest";
 import Registers from "./pages/Registers";
 import Sequence from "./pages/Sequence";
 import Logs from "./pages/Logs";
@@ -25,13 +26,14 @@ type Page =
   | "homing"
   | "axis"
   | "tuning"
+  | "looptest"
   | "storage"
   | "registers"
   | "sequence"
   | "logs";
 
 /** Pages that only matter while commissioning; hidden in production mode. */
-const OP_ONLY = new Set<Page>(["encoder", "homing", "axis", "tuning", "storage", "registers"]);
+const OP_ONLY = new Set<Page>(["encoder", "homing", "axis", "tuning", "looptest", "storage", "registers"]);
 
 const NAV: {
   group: string;
@@ -50,6 +52,7 @@ const NAV: {
     group: "调校",
     items: [
       { id: "tuning", label: "PID 与限幅", hint: "TUNE", icon: <Icon.Tuning /> },
+      { id: "looptest", label: "环路测试", hint: "LOOP", icon: <Icon.Gauge /> },
       { id: "storage", label: "板载存储", hint: "EEPROM", icon: <Icon.Save /> },
       { id: "registers", label: "寄存器", hint: "MAP", icon: <Icon.Registers /> },
     ],
@@ -88,6 +91,11 @@ const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
     title: "PID 与限幅",
     desc: "三级级联参数、单位换算与阶跃响应实测。电流归一化选错会让增益差 256 倍。",
     crumb: "TUNING",
+  },
+  looptest: {
+    title: "环路测试",
+    desc: "在受保护的行程内做恒 Iq / 恒速度探测、速度 PI 自动辨识与位置环跟随测试，并看波形。",
+    crumb: "LOOP TEST",
   },
   storage: {
     title: "板载存储",
@@ -306,6 +314,7 @@ function Shell() {
             {page === "homing" && <Homing />}
             {page === "axis" && <Axis />}
             {page === "tuning" && <Tuning />}
+            {page === "looptest" && <LoopTest />}
             {page === "storage" && <Storage />}
             {page === "registers" && <Registers />}
             {page === "sequence" && <Sequence />}

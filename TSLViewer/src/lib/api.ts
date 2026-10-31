@@ -345,6 +345,76 @@ const mock = (() => {
     homing.timer = window.setInterval(homingTick, 40);
   };
 
+  // ---- 环路测试：被控对象仿真（仅浏览器预览） --------------------------
+  // 环路测试页只做上位机的事：写给定/限幅寄存器、每 60 ms 读回反馈。
+  // 这里用最简单的模型把写进寄存器的给定跑成位置/速度/电流，好让页面在没有
+  // 硬件时也能验证「边界裁决/评分/波形」这套上位机逻辑。
+  const PLANT = {
+    lo: 0,
+    hi: 65536 * 4,
+    /** 每 mA 的稳态转速贡献，RPM/mA */
+    rpmPerMa: 6,
+    /** 机械等效时间常数，s */
+    tau: 0.08,
+    /** 静摩擦，mA */
+    frictionMa: 45,
+    maPerCount: 0.20131,
+    countsPerRpm: 305.4,
+  };
+  const plant = { pos: 0x4000, rpm: 0, iq: 0, integ: 0 };
+  const i16 = (v: number) => ((((v >>> 16) & 0xffff) << 16) >> 16);
+  window.setInterval(() => {
+    if (!connected) return;
+    const mode = (seed(0x100) >>> 9) & 0x0f;
+    const drv = ((seed(0x101) >>> 16) & 1) === 1;
+    const powered = drv && mode !== 0;
+    const iqTgtMa = i16(seed(0x14e)) * PLANT.maPerCount;
+    const rpmTgt = (seed(0x150) | 0) / PLANT.countsPerRpm;
+    const posTgt = seed(0x152) | 0;
+    const limitMa = ((seed(0x14a) >>> 16) & 0x7fff) * PLANT.maPerCount;
+    const velLimit = seed(0x14b) / PLANT.countsPerRpm;
+    const coeff = seed(0x145);
+    const kp = (coeff >>> 16) & 0xffff;
+    const ki = coeff & 0xffff;
+    // 归一化增益的"相对倍率"，让辨识不同候选时行为真的变（夹在 0.2…4 防止发散）
+    const g = Math.max(0.2, Math.min(4, (kp + ki) / 750));
+    const dt = 0.02;
+    let iqCmd = 0;
+    if (!powered) {
+      plant.integ = 0;
+    } else if (mode === 2) {
+      iqCmd = iqTgtMa;
+      plant.integ = 0;
+    } else if (mode === 3 || mode === 4) {
+      const vt =
+        mode === 3
+          ? rpmTgt
+          : Math.max(-Math.abs(velLimit), Math.min(Math.abs(velLimit), (posTgt - plant.pos) * 0.02));
+      const err = vt - plant.rpm;
+      plant.integ = Math.max(-limitMa, Math.min(limitMa, plant.integ + err * dt * 0.9 * g));
+      iqCmd = err * 0.12 * g + plant.integ;
+    }
+    plant.iq = Math.max(-limitMa, Math.min(limitMa, iqCmd));
+    const drive =
+      Math.abs(plant.iq) > PLANT.frictionMa ? plant.iq - Math.sign(plant.iq) * PLANT.frictionMa : 0;
+    const accel = (drive * PLANT.rpmPerMa - plant.rpm) / PLANT.tau;
+    plant.rpm += accel * dt;
+    plant.pos += (plant.rpm / 60) * 65536 * dt;
+    if (plant.pos <= PLANT.lo) {
+      plant.pos = PLANT.lo;
+      if (plant.rpm < 0) plant.rpm = 0;
+    }
+    if (plant.pos >= PLANT.hi) {
+      plant.pos = PLANT.hi;
+      if (plant.rpm > 0) plant.rpm = 0;
+    }
+    regCache.set(0x155, Math.round(plant.pos) >>> 0);
+    regCache.set(0x154, Math.round(plant.rpm * PLANT.countsPerRpm) >>> 0);
+    regCache.set(0x153, (((Math.round(plant.iq / PLANT.maPerCount) & 0xffff) << 16) | 0) >>> 0);
+    regCache.set(0x159, Math.round((rpmTgt - plant.rpm) * PLANT.countsPerRpm) >>> 0);
+    regCache.set(0x15f, Math.round(plant.integ / PLANT.maPerCount) & 0xffff);
+  }, 20);
+
   const seed = (addr: number) => {
     if (!regCache.has(addr)) {
       const table: Record<number, number> = {
@@ -372,7 +442,6 @@ const mock = (() => {
 
   const log = (level: LogLine["level"], source: string, message: string) =>
     mockBus.emit("tsl:log", { ts: Date.now(), level, source, message });
-
   const stats = (): LinkStats => ({
     connected,
     port: connected ? port : "",

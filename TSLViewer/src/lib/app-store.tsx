@@ -24,6 +24,7 @@ const JOB_LABEL: Record<string, string> = {
   pid: "PID 与限幅写入",
   step: "阶跃测试",
   sequence: "自动测试序列",
+  looptest: "环路测试",
 };
 
 /** 从任务结果里摘一句能直接读的"结果"，没有就返回空串。 */
@@ -117,6 +118,17 @@ interface AppCtx {
   steps: StepState[];
   /** 按任务类型分开存，便于同屏并排显示「编码器写入」与「电角度对齐」两段流程 */
   stepsByKind: Record<string, StepState[]>;
+  /** 上位机自己产生的日志行（不经过后端，例如环路测试的行程裁决） */
+  hostLog: (level: LogLine["level"], source: string, message: string) => void;
+  /** 上位机自己推进的步骤：环路测试没有后端任务，流程由页面驱动 */
+  hostStep: (
+    kind: string,
+    step: { idx: number; total: number; label: string; status: StepState["status"]; detail?: string }
+  ) => void;
+  /** 流程开头：清空该 kind 的步骤序列，并写「▶ 开始」到运行日志 */
+  hostJobStart: (kind: string) => void;
+  /** 流程结尾：把「■ 结束」与结果摘要写进运行日志 */
+  hostJobEnd: (kind: string, ok: boolean, result?: string) => void;
   jobRunning: boolean;
   lastDone: JobDone | null;
   runJob: (kind: string, payload: unknown) => Promise<void>;
@@ -410,6 +422,83 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void api.cancelJob();
   }, [appendLog]);
 
+  const hostLog = useCallback(
+    (level: LogLine["level"], source: string, message: string) => {
+      appendLog({ ts: Date.now(), level, source, message });
+    },
+    [appendLog]
+  );
+
+  const hostStep = useCallback(
+    (
+      kind: string,
+      step: { idx: number; total: number; label: string; status: StepState["status"]; detail?: string }
+    ) => {
+      const entry: StepState = {
+        idx: step.idx,
+        total: step.total,
+        label: step.label,
+        status: step.status,
+        detail: step.detail ?? "",
+      };
+      setStepsByKind((prev) => {
+        const list = [...(prev[kind] ?? [])];
+        const at = list.findIndex((s) => s.idx === step.idx && s.status === "run");
+        if (at >= 0) list[at] = entry;
+        else list.push(entry);
+        return { ...prev, [kind]: list.slice(-400) };
+      });
+      // 过程行落日志，方便事后按时间顺序复盘（与后端任务的写法保持一致）
+      if (step.status !== "run") {
+        const level: LogLine["level"] =
+          step.status === "fail" ? "error" : step.status === "ok" ? "ok" : "info";
+        appendLog({
+          ts: Date.now(),
+          level,
+          source: `job/${kind}`,
+          message: `${String(step.idx).padStart(2, "0")}${
+            step.total > 0 ? `/${step.total}` : ""
+          } ${step.label}${step.detail ? ` · ${step.detail}` : ""}`,
+        });
+      }
+    },
+    [appendLog]
+  );
+
+  const hostJobStart = useCallback(
+    (kind: string) => {
+      setStepsByKind((prev) => ({ ...prev, [kind]: [] }));
+      appendLog({
+        ts: Date.now(),
+        level: "info",
+        source: `job/${kind}`,
+        message: `▶ 开始 ${JOB_LABEL[kind] ?? kind}`,
+      });
+    },
+    [appendLog]
+  );
+
+  const hostJobEnd = useCallback(
+    (kind: string, ok: boolean, result?: string) => {
+      const label = JOB_LABEL[kind] ?? kind;
+      if (result) {
+        appendLog({
+          ts: Date.now(),
+          level: ok ? "ok" : "error",
+          source: `job/${kind}`,
+          message: `◆ 结果 ${result}`,
+        });
+      }
+      appendLog({
+        ts: Date.now(),
+        level: ok ? "ok" : "error",
+        source: `job/${kind}`,
+        message: `■ 结束 ${label}·${ok ? "成功" : "失败"}`,
+      });
+    },
+    [appendLog]
+  );
+
   const clearLogs = useCallback(async () => {
     await api.clearLogs();
     setLogs([]);
@@ -610,6 +699,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     stopStream,
     steps,
     stepsByKind,
+    hostLog,
+    hostStep,
+    hostJobStart,
+    hostJobEnd,
     jobRunning,
     lastDone,
     runJob,
