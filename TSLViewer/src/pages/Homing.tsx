@@ -28,11 +28,12 @@ const HOMING_DEFAULT = {
   timeoutS: 60,
 };
 
-function HomingStageBadge({ stage }: { stage: number }) {
-  if (stage === 1) return <Badge tone="accent" dot="live">进行中</Badge>;
-  if (stage === 2) return <Badge tone="ok">成功</Badge>;
-  if (stage === 3) return <Badge tone="warn">失败</Badge>;
-  return <Badge tone="neutral">空闲</Badge>;
+/** 找零子状态 + 零点有效性 → 直接可读的一句话。 */
+function homingStatus(stage: number, zeroValid: boolean): { text: string; tone?: string } {
+  if (stage === 1) return { text: "进行中", tone: "var(--accent)" };
+  if (stage === 3) return { text: "失败", tone: "var(--danger)" };
+  if (stage === 2 || zeroValid) return { text: "已找零", tone: "var(--ok)" };
+  return { text: "需找零", tone: "var(--warn)" };
 }
 
 /**
@@ -95,8 +96,28 @@ export default function HomingPage() {
     }
   };
 
+  const status = homingStatus(hom?.stage ?? 0, hom?.zero_valid ?? false);
+  const zeroText = hom?.zero_valid ? "有效" : "NULL";
+
   return (
     <div className="grid" style={{ gap: 14 }}>
+      <div className="grid cols-3" style={{ gap: 14 }}>
+        <Stat
+          label="找零状态"
+          value={status.text}
+          tone={status.tone}
+        />
+        <Stat
+          label="行程零点"
+          value={zeroText}
+          tone={hom?.zero_valid ? "var(--ok)" : "var(--text-4)"}
+        />
+        <Stat
+          label="i_q 实测"
+          value={(hom?.iq_ma ?? 0).toFixed(0)}
+          unit="mA"
+        />
+      </div>
 
       <Card
         title="找零控制"
@@ -105,11 +126,6 @@ export default function HomingPage() {
       >
         <div className="grid cols-2" style={{ gap: 14 }}>
           <div className="stack" style={{ gap: 12 }}>
-            <Notice tone="neutral">
-              这是<b>撞限位回零</b>：电机朝限位方向持续推进，主控用「q 轴电流超阈 + <b>连续</b> 确认时间」判定接触，
-              记录实测位置为行程零点后反向退开一圈。上位机下发方向、步进与右侧工艺参数并显示状态；
-              门控、判据、超时与零点写入全部由主控固件裁决。
-            </Notice>
             <div className="grid cols-2" style={{ gap: 10 }}>
               <Field label="找零方向" hint="符号决定朝哪端">
                 <SelectField
@@ -262,21 +278,6 @@ export default function HomingPage() {
           </div>
         </div>
       </Card>
-
-      <div className="grid cols-3" style={{ gap: 14 }}>
-        <Stat label="找零状态" value={<HomingStageBadge stage={hom?.stage ?? 0} />} delta="0 空闲 / 1 进行中 / 2 成功 / 3 失败" />
-        <Stat
-          label="行程零点"
-          value={hom?.zero_valid ? <Badge tone="ok">有效</Badge> : <Badge tone="warn">需找零</Badge>}
-          delta="上电必清，需每次重新找零"
-        />
-        <Stat
-          label="i_q 实测"
-          value={(hom?.iq_ma ?? 0).toFixed(0)}
-          unit="mA"
-          delta={`判定阈值 ${thresholdMa} mA`}
-        />
-      </div>
     </div>
   );
 }
