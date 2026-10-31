@@ -870,7 +870,7 @@ a {
 }
 .step {
   display: grid;
-  grid-template-columns: 20px 1fr auto;
+  grid-template-columns: 18px minmax(0, 1fr) max-content;
   align-items: center;
   gap: 9px;
   padding: 6px 8px;
@@ -920,10 +920,12 @@ a {
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-4);
-  max-width: 46%;
+  /* 数据要看得全：优先给它空间，标签先省略；用固定上限避免百分比自引用 */
+  max-width: 44ch;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  text-align: right;
 }
 
 /* --------------------------------------------------------------- gauge --- */

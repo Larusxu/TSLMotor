@@ -17,15 +17,16 @@ import {
 import { countsFromMa, fmt, hex } from "../lib/units";
 import type { CalibCfgPayload, CalibResult } from "../lib/types";
 
-export default function AlignPage() {
-  return (
-    <div className="grid" style={{ gap: 14 }}>
-      <AlignmentPanels />
-    </div>
-  );
-}
+/** 对齐结果表在还没跑过对齐时的占位行。 */
+const PLACEHOLDER_GROUPS: CalibResult["groups"] = [0, 90, 180, 270].map((deg) => ({
+  deg,
+  n: 0,
+  avg: 0,
+  unwrapped: 0,
+  residual: 0,
+}));
 
-/** 电角度对齐 + 结果 + 速度闭环。作为「编码器」页的第二节复用。 */
+/** 电角度对齐 + 结果 + 速度闭环。作为「编码器与对齐」页的第二节复用。 */
 export function AlignmentPanels() {
   const app = useApp();
   const [fluxMa, setFluxMa] = useState(300);
@@ -138,79 +139,99 @@ export function AlignmentPanels() {
 
         <div className="col-stack">
         <Card title="对齐结果" sub="FIT RESULT">
-          {!result ? (
-            <div className="empty">
-              <Icon.Align width={22} height={22} />
-              尚未执行对齐
-            </div>
-          ) : (
-            <div className="stack" style={{ gap: 12 }}>
-              <div className="row" style={{ gap: 10 }}>
-                <div className="grow">
-                  <div className="stat-label">PHI_E_OFFSET</div>
+          <div className="stack" style={{ gap: 12 }}>
+            <div className="row" style={{ gap: 10 }}>
+              <div className="grow">
+                <div className="stat-label">PHI_E_OFFSET</div>
+                {result ? (
                   <div className="stat-value mono">{result.offset_hex}</div>
-                </div>
+                ) : (
+                  <div className="stat-value">未对齐</div>
+                )}
+              </div>
+              {result ? (
                 <Badge tone={result.r2 > 0.99 ? "ok" : result.r2 > 0.9 ? "warn" : "danger"}>
                   R² {result.r2.toFixed(5)}
                 </Badge>
-              </div>
-              <KV
-                rows={[
-                  ["0° 时编码器值", <span key="a" className="mono">{fmt(result.intercept % 16384, 1)}</span>],
-                  ["拟合斜率", <span key="b" className="mono">{fmt(result.slope, 4)} LSB/°</span>],
-                  ["已写回", <span key="c">{result.written ? "是" : "否"}</span>],
-                ]}
-              />
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>deg</th>
-                    <th>n</th>
-                    <th>平均编码器</th>
-                    <th>残差</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.groups.map((g) => (
+              ) : (
+                <Badge tone="neutral">R² —</Badge>
+              )}
+            </div>
+            <KV
+              rows={[
+                [
+                  "0° 时编码器值",
+                  <span key="a" className="mono">
+                    {result ? fmt(result.intercept % 16384, 1) : "—"}
+                  </span>,
+                ],
+                [
+                  "拟合斜率",
+                  <span key="b" className="mono">
+                    {result ? `${fmt(result.slope, 4)} LSB/°` : "—"}
+                  </span>,
+                ],
+                ["已写回", <span key="c">{result ? (result.written ? "是" : "否") : "—"}</span>],
+              ]}
+            />
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>deg</th>
+                  <th>n</th>
+                  <th>平均编码器</th>
+                  <th>残差</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(result?.groups ?? PLACEHOLDER_GROUPS).map((g) => {
+                  const has = result !== null;
+                  return (
                     <tr key={g.deg}>
                       <td className="mono">{g.deg}°</td>
-                      <td className="mono">{g.n}</td>
-                      <td className="mono">{fmt(g.avg, 1)}</td>
-                      <td className="mono" style={{ color: Math.abs(g.residual) > 80 ? "var(--warn)" : "var(--text-2)" }}>
-                        {g.residual > 0 ? "+" : ""}
-                        {fmt(g.residual, 1)}
+                      <td className="mono">{has ? g.n : "—"}</td>
+                      <td className="mono">{has ? fmt(g.avg, 1) : "—"}</td>
+                      <td
+                        className="mono"
+                        style={{ color: has && Math.abs(g.residual) > 80 ? "var(--warn)" : "var(--text-2)" }}
+                      >
+                        {has ? `${g.residual > 0 ? "+" : ""}${fmt(g.residual, 1)}` : "—"}
                       </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="row" style={{ gap: 8 }}>
-                <div style={{ width: 120 }}>
-                  <HexField value={offset} onChange={setOffset} bits={16} />
-                </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={!app.connected || !app.armed}
-                  onClick={async () => {
-                    try {
-                      await api.writeReg(0x242, offset & 0xffff, true);
-                      app.toast("ok", `0x242 ← ${hex(offset, 4)}`);
-                    } catch (e) {
-                      app.toast("error", String(e));
-                    }
-                  }}
-                >
-                  手动写入 0x242
-                </Button>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div className="row" style={{ gap: 8 }}>
+              <div style={{ width: 120 }}>
+                <HexField value={offset} onChange={setOffset} bits={16} />
               </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={!app.connected || !app.armed}
+                onClick={async () => {
+                  try {
+                    await api.writeReg(0x242, offset & 0xffff, true);
+                    app.toast("ok", `0x242 ← ${hex(offset, 4)}`);
+                  } catch (e) {
+                    app.toast("error", String(e));
+                  }
+                }}
+              >
+                手动写入 0x242
+              </Button>
+            </div>
+            {result ? (
               <Notice tone={result.r2 > 0.99 ? "ok" : "warn"}>
                 {result.r2 > 0.99
                   ? "拟合质量良好：可以进入速度闭环。"
                   : "拟合质量一般：检查编码器打滑、极对数、SPI 掩码，或增大对齐电流后重试。"}
               </Notice>
-            </div>
-          )}
+            ) : (
+              <div className="tiny muted">尚未执行对齐：跑一次「电角度对齐」，结果会填到这里。</div>
+            )}
+          </div>
         </Card>
 
         <Card title="速度闭环" sub="CLOSED LOOP VELOCITY">

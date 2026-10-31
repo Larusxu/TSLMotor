@@ -629,6 +629,17 @@ export interface StepState {
  * 流程步骤列表：高度固定（不随内容增长），超出后自己滚。
  * 默认自动跟随最新一步；用户用滚轮往上翻时暂停跟随，滚回底部自动恢复。
  */
+/**
+ * 步骤框里的 detail 只显示"标题级"短语：遇到第一个标点就截断。
+ * 完整原文仍然写进运行日志（见 app-store 的 job 日志），这里只求框内读得下。
+ */
+function shortDetail(detail: string): string {
+  const d = detail.trim();
+  if (!d) return "";
+  const cut = d.split(/[，,；;、（(]/)[0].trim();
+  return cut || d;
+}
+
 export function Steps({
   steps,
   height = 232,
@@ -692,7 +703,7 @@ export function Steps({
                     {s.label}
                   </span>
                 </span>
-                <span className="detail">{s.detail}</span>
+                <span className="detail">{shortDetail(s.detail)}</span>
               </div>
             ))}
           </div>
