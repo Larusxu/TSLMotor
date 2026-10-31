@@ -262,7 +262,7 @@ export default function EncoderPage() {
               <Field label="SPI 模式" hint="CPOL/CPHA">
                 <div
                   style={{ cursor: "not-allowed" }}
-                  onClick={() => app.toast("info", "SPI 模式为 MT6701 编码器固定配置")}
+                  onClick={() => app.toast("info", "MT6701 编码器固定配置")}
                 >
                   <div style={{ pointerEvents: "none" }}>
                     <SelectField
@@ -288,7 +288,7 @@ export default function EncoderPage() {
               <Field label="发送数据" hint="RESPONSE_1">
                 <div
                   style={{ cursor: "not-allowed" }}
-                  onClick={() => app.toast("info", "发送数据为 MT6701 编码器固定配置")}
+                  onClick={() => app.toast("info", "MT6701 编码器固定配置")}
                 >
                   <div style={{ pointerEvents: "none" }}>
                     <HexField value={sendData} />
