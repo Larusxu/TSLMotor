@@ -19,6 +19,15 @@ import { countsFromMa, fmt, hex } from "../lib/units";
 import type { CalibCfgPayload, CalibResult } from "../lib/types";
 
 export default function AlignPage() {
+  return (
+    <div className="grid" style={{ gap: 14 }}>
+      <AlignmentPanels />
+    </div>
+  );
+}
+
+/** 电角度对齐 + 结果 + 速度闭环。作为「编码器」页的第二节复用。 */
+export function AlignmentPanels() {
   const app = useApp();
   const [fluxMa, setFluxMa] = useState(300);
   const [poles, setPoles] = useState(app.cal.poles);
@@ -60,16 +69,10 @@ export default function AlignPage() {
   const overLimit = fluxCounts > 8192;
 
   return (
-    <div className="grid" style={{ gap: 14 }}>
-      <div className="grid flow-2-1">
-        <div className="col-stack">
+    <div className="grid flow-2-1">
+      <div className="col-stack">
         <Card title="电角度对齐" sub="PHI_E ALIGNMENT" right={<Badge tone={app.jobRunning ? "accent" : "neutral"} dot={app.jobRunning ? "live" : undefined}>{app.jobRunning ? "执行中" : "空闲"}</Badge>}>
           <div className="stack" style={{ gap: 12 }}>
-            <Notice tone="warn">
-              对齐会以开环电流把转子拉到已知电角度，<b>电机会明显转动</b>。Tesla 手指电机限幅只有 800 mA，
-              建议 200–350 mA，不要用上位机默认的 10000 counts（≈2 A）。
-            </Notice>
-
             <div className="grid cols-4" style={{ gap: 10 }}>
               <Field label="对齐电流" hint={`${fluxCounts} counts`}>
                 <NumField value={fluxMa} onChange={setFluxMa} min={50} max={1600} step={10} unit="mA" />
@@ -284,20 +287,6 @@ export default function AlignPage() {
             </div>
           </div>
         </Card>
-
-        <Card title="闭环前检查" sub="PRE-CHECKS">
-          <div className="stack" style={{ gap: 10 }}>
-            <Notice>
-              ① 编码器角度随手动转动变化；② <span className="mono">0x0C3 = 3</span>（4×）；③ PID 已写入且
-              <b> 电流归一化 = Shift by 8</b>；④ <span className="mono">0x14A</span> 力矩限幅 &gt; 0。
-            </Notice>
-            <div className="tiny muted">
-              若 300 RPM 目标下实际转速在 200–330 RPM 摆动，说明速度环 P/I 偏大或测速更新率不足，
-              请到「PID 与限幅」页做阶跃测试重新整定。
-            </div>
-          </div>
-        </Card>
-        </div>
       </div>
     </div>
   );

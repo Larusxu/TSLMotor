@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AppProvider, useApp } from "./lib/app-store";
 import { api, HAS_TAURI } from "./lib/api";
@@ -11,7 +11,7 @@ import MotorEnable from "./components/MotorEnable";
 import HandIdentity from "./components/HandIdentity";
 import Overview from "./pages/Overview";
 import Encoder from "./pages/Encoder";
-import Align from "./pages/Align";
+import Homing from "./pages/Homing";
 import Axis from "./pages/Axis";
 import Tuning from "./pages/Tuning";
 import Registers from "./pages/Registers";
@@ -22,7 +22,7 @@ import Storage from "./pages/Storage";
 type Page =
   | "overview"
   | "encoder"
-  | "align"
+  | "homing"
   | "axis"
   | "tuning"
   | "storage"
@@ -31,7 +31,7 @@ type Page =
   | "logs";
 
 /** Pages that only matter while commissioning; hidden in production mode. */
-const OP_ONLY = new Set<Page>(["encoder", "align", "axis", "tuning", "storage", "registers"]);
+const OP_ONLY = new Set<Page>(["encoder", "homing", "axis", "tuning", "storage", "registers"]);
 
 const NAV: {
   group: string;
@@ -41,8 +41,8 @@ const NAV: {
     group: "工作区",
     items: [
       { id: "overview", label: "运行概览", hint: "RUN", icon: <Icon.Gauge /> },
-      { id: "encoder", label: "编码器", hint: "SSI", icon: <Icon.Encoder /> },
-      { id: "align", label: "对齐与闭环", hint: "PHI_E", icon: <Icon.Align /> },
+      { id: "encoder", label: "编码器与对齐", hint: "SSI", icon: <Icon.Encoder /> },
+      { id: "homing", label: "机械找零", hint: "HOME", icon: <Icon.Target /> },
       { id: "axis", label: "机械行程", hint: "AXIS", icon: <Icon.Ruler /> },
     ],
   },
@@ -70,14 +70,14 @@ const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
     crumb: "OVERVIEW",
   },
   encoder: {
-    title: "编码器配置",
-    desc: "MT6701 SSI 编码器的引脚复用、SPI 时序与反馈通道配置，逐寄存器校验。",
-    crumb: "ENCODER",
+    title: "编码器与对齐",
+    desc: "MT6701 SSI 的引脚复用与反馈通道配置，随后做开环电角度对齐，最后用编码器闭环验证。",
+    crumb: "ENCODER · ALIGN",
   },
-  align: {
-    title: "对齐与闭环",
-    desc: "开环电角度对齐，然后用编码器闭环维持转速。两步都需要 ARM 解锁。",
-    crumb: "CLOSED LOOP",
+  homing: {
+    title: "机械找零",
+    desc: "撞限位建立行程零点。上位机只下发方向与步进、显示状态；推进与判据在主控固件。",
+    crumb: "HOMING",
   },
   axis: {
     title: "机械行程",
@@ -303,7 +303,7 @@ function Shell() {
             </div>
             {page === "overview" && <Overview />}
             {page === "encoder" && <Encoder />}
-            {page === "align" && <Align />}
+            {page === "homing" && <Homing />}
             {page === "axis" && <Axis />}
             {page === "tuning" && <Tuning />}
             {page === "storage" && <Storage />}
