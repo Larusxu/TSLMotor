@@ -303,12 +303,15 @@ export function HexField({
   width,
   disabled,
   bits = 32,
+  onClick,
 }: {
   value: number;
   onChange?: (v: number) => void;
   width?: number | string;
   disabled?: boolean;
   bits?: 16 | 32;
+  /** 只读框的被点击提示：给了就没有可编辑性，点击只回调这里。 */
+  onClick?: () => void;
 }) {
   const fmt = (v: number) =>
     "0x" + (v >>> 0).toString(16).toUpperCase().padStart(bits / 4, "0");
@@ -334,6 +337,8 @@ export function HexField({
         value={text}
         disabled={disabled}
         readOnly={!onChange}
+        onClick={onClick}
+        style={onClick ? { cursor: "not-allowed" } : undefined}
         onFocus={() => setFocus(true)}
         onBlur={() => {
           setFocus(false);
@@ -379,6 +384,7 @@ export function SelectField<T extends string | number>({
   width,
   disabled,
   label,
+  onClick,
 }: {
   value: T;
   onChange: (v: T) => void;
@@ -386,6 +392,8 @@ export function SelectField<T extends string | number>({
   width?: number | string;
   disabled?: boolean;
   label?: string;
+  /** 固定项的被点击提示：给了就不展开下拉，点击只回调这里。 */
+  onClick?: () => void;
 }) {
   return (
     <div className="input-wrap" style={{ width, position: "relative" }}>
@@ -393,6 +401,11 @@ export function SelectField<T extends string | number>({
         aria-label={label}
         value={String(value)}
         disabled={disabled}
+        onMouseDown={(e) => {
+          if (onClick) e.preventDefault();
+        }}
+        onClick={onClick}
+        style={onClick ? { cursor: "not-allowed" } : undefined}
         onChange={(e) => {
           const found = options.find((o) => String(o.value) === e.target.value);
           if (found) onChange(found.value);
