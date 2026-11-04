@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app-store";
@@ -15,6 +15,9 @@ import {
   NumField,
 } from "../components/ui";
 import { countsFromMa, fmt } from "../lib/units";
+import { semanticCommission, alignmentRetreatDegrees } from "../lib/semantic-commission";
+import { semanticFresh } from "../lib/semantic-state";
+import { semanticMotion } from "../lib/semantic-motion";
 import type { CalibCfgPayload, CalibResult } from "../lib/types";
 
 /** 对齐结果表在还没跑过对齐时的占位行。 */
@@ -27,7 +30,7 @@ const PLACEHOLDER_GROUPS: CalibResult["groups"] = [0, 90, 180, 270].map((deg) =>
 }));
 
 /** 电角度对齐 + 结果 + 速度闭环。作为「编码器与对齐」页的第二节复用。 */
-export function AlignmentPanels() {
+export function AlignmentPanels({ onCompleted }: { onCompleted?: () => Promise<void> } = {}) {
   const app = useApp();
   const [fluxMa, setFluxMa] = useState(300);
   const [poles, setPoles] = useState(app.cal.poles);
@@ -37,19 +40,37 @@ export function AlignmentPanels() {
   const [writeBack, setWriteBack] = useState(true);
   const [dryRun, setDryRun] = useState(false);
   const [safety, setSafety] = useState(false);
-  const [result, setResult] = useState<CalibResult | null>(null);
+  const result = app.mode === "direct" ? app.alignment : null;
   const [rpm, setRpm] = useState(100);
   const [runSafety, setRunSafety] = useState(false);
-
-  useEffect(() => {
-    const d = app.lastDone;
-    if (d && d.ok && d.data && typeof d.data === "object" && "offset_hex" in (d.data as object)) {
-      const r = d.data as CalibResult;
-      setResult(r);
-      app.toast("ok", `对齐完成：offset ${r.offset_hex} · R²=${r.r2.toFixed(5)}`);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [app.lastDone]);
+  const [clearance, setClearance] = useState(true);
+  const [commissionBusy, setCommissionBusy] = useState(false);
+  const [commissionNote, setCommissionNote] = useState("");
+  const [verifiedOffset, setVerifiedOffset] = useState<number | null>(null);
+  const mainboard = app.mode === "main485" || app.mode === "maincan";
+  const state = app.connected && app.semantic.motor === app.motor && semanticFresh(app.semantic) ? app.semantic.state : null;
+  const alignmentState = !state ? "未确认或已过期" : state.drive === 1 ? "主控执行中" : state.align_valid ? "主控已验证" : "本次未验证";
+  const retreat = alignmentRetreatDegrees(endDeg, poles);
+  const startAlignment = async () => {
+    if (!mainboard) { await app.runJob("calibrate", { cfg, frameBits: 14 }); return; }
+    if (dryRun || !writeBack) throw new Error("主控标定会验证并保存 W25 档案；请关闭干跑并勾选自动写回");
+    if (poles !== app.cal.poles) throw new Error("极对数须先保存并由主控读回验证");
+    setCommissionBusy(true); setCommissionNote("主控已接管：检查限位、必要时反向回退，再进行标定");
+    try {
+      await app.stopStream();
+      await semanticCommission.align(app.motor, { scanDegrees: endDeg, stepDegrees: stepDeg,
+        settleMs: settle, currentMa: fluxMa, clearance }, r => {
+          if (r.motor) setCommissionNote(r.motor.drive === 1 ? "主控执行中：预检查 / 回退 / 扫描 / 读回" : "主控正在确认标定结果");
+        });
+      await semanticMotion.permit(app.motor,false);
+      const readback = await semanticMotion.command(app.motor,{kind:"encoder_state"});
+      const value = readback.encoder?.[1] ? readback.encoder[4] : null;
+      setVerifiedOffset(value == null ? null : value & 0xffff);
+      await onCompleted?.();
+      setCommissionNote(`主控标定及 W25 / M24 保存比对已确认，实际偏移=${value == null ? "读回暂不可用" : value & 0xffff}；机械双端零点需重新建立`);
+    } catch (e) { setCommissionNote(String(e)); app.toast("error", String(e)); }
+    finally { setCommissionBusy(false); }
+  };
 
   const cfg: CalibCfgPayload = {
     flux_ma: fluxMa,
@@ -69,7 +90,7 @@ export function AlignmentPanels() {
   return (
     <div className="grid flow-2-1">
       <div className="col-stack">
-        <Card title="电角度对齐" sub="PHI_E ALIGNMENT" right={<Badge tone={app.jobRunning ? "accent" : "neutral"} dot={app.jobRunning ? "live" : undefined}>{app.jobRunning ? "执行中" : "空闲"}</Badge>}>
+        <Card title="电角度对齐" sub="PHI_E ALIGNMENT" right={<Badge tone={mainboard ? state?.align_valid ? "ok" : "neutral" : app.jobRunning ? "accent" : "neutral"}>{mainboard ? alignmentState : app.jobRunning ? "执行中" : "空闲"}</Badge>}>
           <div className="stack" style={{ gap: 12 }}>
             <div className="grid cols-4" style={{ gap: 10 }}>
               <Field label="对齐电流" hint={`${fluxCounts} counts`}>
@@ -92,7 +113,7 @@ export function AlignmentPanels() {
               </Field>
               <div className="grow" />
               <Check checked={writeBack} onChange={setWriteBack}>
-                自动写回 0x242
+                {mainboard ? "主控验证并保存 W25" : "自动写回 0x242"}
               </Check>
               <Check checked={dryRun} onChange={setDryRun}>
                 干跑（不扫描）
@@ -106,6 +127,9 @@ export function AlignmentPanels() {
             )}
 
             <div className="divider" />
+            <Check checked={clearance} onChange={setClearance}>标定前检查机械限位，接触时自动反向回退</Check>
+            <Notice tone="warn">{mainboard ? `预检查由主控执行，使用已验证的电角度档案。${endDeg}° 电角扫描对应回退 ${retreat}° 机械角；遇到另一端阻挡立即停止，不反复换向。首次空白标定没有有效偏移时不执行闭环回退。` : "自动限位预检查仅支持经主控的 485/CAN 模式；直连模式请先手动移到行程中段。"}</Notice>
+            {commissionNote && <Notice tone={commissionBusy ? "warn" : "neutral"}>{commissionNote}</Notice>}
             <Check checked={safety} onChange={setSafety}>
               我已确认电机固定、联轴器锁紧、电源限流
             </Check>
@@ -113,10 +137,9 @@ export function AlignmentPanels() {
               <Button
                 variant="primary"
                 icon={<Icon.Align width={14} height={14} />}
-                disabled={!app.connected || !app.armed || !safety || app.jobRunning}
+                disabled={!app.connected || !app.armed || !safety || app.jobRunning || commissionBusy || (mainboard && fluxMa > 500)}
                 onClick={() => {
-                  setResult(null);
-                  void app.runJob("calibrate", { cfg, frameBits: 14 });
+                  void startAlignment().catch(e => app.toast("error", String(e)));
                 }}
               >
                 开始对齐
@@ -124,8 +147,8 @@ export function AlignmentPanels() {
               <Button
                 variant="ghost"
                 icon={<Icon.Stop width={13} height={13} />}
-                disabled={!app.jobRunning}
-                onClick={app.cancel}
+                disabled={!app.jobRunning && !commissionBusy}
+                onClick={() => { if (commissionBusy) void semanticCommission.cancel(); else app.cancel(); }}
               >
                 取消
               </Button>
@@ -136,15 +159,15 @@ export function AlignmentPanels() {
         </div>
 
         <div className="col-stack">
-        <Card title="对齐结果" sub="FIT RESULT">
+        {mainboard ? <Card title="对齐结果" right={<Badge tone={state?.align_valid?"ok":"neutral"}>{alignmentState}</Badge>}><div className="stack" style={{gap:12}}><div><div className="stat-label">PHI_E_OFFSET</div><div className="stat-value mono">{verifiedOffset ?? "—"}</div></div><div className="divider"/><div className="tiny muted">标定完成后保持电机板供电，驱动禁能；机械零点需重新建立。</div></div></Card> : <Card title="对齐结果" sub="FIT RESULT">
           <div className="stack" style={{ gap: 12 }}>
             <div className="row" style={{ gap: 10 }}>
               <div className="grow">
                 <div className="stat-label">PHI_E_OFFSET</div>
                 {result ? (
-                  <div className="stat-value mono">{result.offset_hex}</div>
+                  <div className="stat-value mono">{result.offset}</div>
                 ) : (
-                  <div className="stat-value">未对齐</div>
+                  <div className="stat-value">{mainboard ? alignmentState : "未对齐"}</div>
                 )}
               </div>
               {result ? (
@@ -201,16 +224,18 @@ export function AlignmentPanels() {
               </tbody>
             </table>
             {result && (
-              <Notice tone={result.r2 > 0.99 ? "ok" : "warn"}>
-                {result.r2 > 0.99
-                  ? "拟合质量良好：可以进入速度闭环。"
+              <Notice tone={result.written && result.r2 > 0.99 ? "ok" : "warn"}>
+                {!result.written
+                  ? "仅得到拟合结果，偏移未写回；请完成写回校验后再运行。"
+                  : result.r2 > 0.99
+                  ? "偏移已写回，拟合质量良好。闭环运行或找零前，仍需写入电流环、速度环、位置环参数并确认限幅。"
                   : "拟合质量一般：检查编码器打滑、极对数、SPI 掩码，或增大对齐电流后重试。"}
               </Notice>
             )}
           </div>
-        </Card>
+        </Card>}
 
-        <Card title="速度闭环" sub="CLOSED LOOP VELOCITY">
+        {!mainboard && <Card title="速度闭环" sub="CLOSED LOOP VELOCITY">
           <div className="stack" style={{ gap: 12 }}>
             <div className="grid cols-3" style={{ gap: 10 }}>
               <Field label="目标转速" hint="RPM">
@@ -276,7 +301,7 @@ export function AlignmentPanels() {
               </Button>
             </div>
           </div>
-        </Card>
+        </Card>}
       </div>
     </div>
   );

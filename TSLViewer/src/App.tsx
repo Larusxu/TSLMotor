@@ -44,7 +44,7 @@ const NAV: {
     items: [
       { id: "overview", label: "运行概览", hint: "RUN", icon: <Icon.Gauge /> },
       { id: "encoder", label: "编码器与对齐", hint: "SSI", icon: <Icon.Encoder /> },
-      { id: "homing", label: "机械找零", hint: "HOME", icon: <Icon.Target /> },
+      { id: "homing", label: "电机控制与找零", hint: "MOTION", icon: <Icon.Target /> },
       { id: "axis", label: "机械行程", hint: "AXIS", icon: <Icon.Ruler /> },
     ],
   },
@@ -53,7 +53,7 @@ const NAV: {
     items: [
       { id: "tuning", label: "PID 与限幅", hint: "TUNE", icon: <Icon.Tuning /> },
       { id: "looptest", label: "环路测试", hint: "LOOP", icon: <Icon.Gauge /> },
-      { id: "storage", label: "板载存储", hint: "EEPROM", icon: <Icon.Save /> },
+      { id: "storage", label: "板载存储", hint: "W25 / M24", icon: <Icon.Save /> },
       { id: "registers", label: "寄存器", hint: "MAP", icon: <Icon.Registers /> },
     ],
   },
@@ -99,8 +99,8 @@ const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
   },
   storage: {
     title: "板载存储",
-    desc: "把标定值写进板上的 M24C02 EEPROM：掉电不丢，换 PC 不用重新对齐。",
-    crumb: "EEPROM",
+    desc: "主控 W25 保存完整配置，电机 M24C02 保存编号与电角度偏移备份；保存后由主控读回校验。",
+    crumb: "W25 / M24",
   },
   registers: {
     title: "寄存器",
@@ -254,7 +254,7 @@ function Shell() {
               断开
             </Button>
           ) : (
-            <Button variant="primary" onClick={() => void app.connect()} disabled={app.busy}>
+            <Button variant="primary" onClick={() => void app.connect()} disabled={app.busy || (!HAS_TAURI && app.mode!=="direct")} title={!HAS_TAURI && app.mode!=="direct" ? "网页显示真实页面结构，连接硬件需要桌面通信后端" : undefined}>
               {app.busy ? "连接中…" : "连接"}
             </Button>
           )}
@@ -269,7 +269,7 @@ function Shell() {
                   label="电机"
                   value={app.motor}
                   onChange={app.setMotor}
-                  disabled={app.busy}
+                  disabled={app.busy || app.jobRunning}
                   options={Array.from({ length: 16 }, (_, i) => ({ value: i + 1, label: `M${i + 1}` }))}
                 />
               </div>
@@ -281,6 +281,7 @@ function Shell() {
             icon={<Icon.Stop width={13} height={13} />}
             onClick={() => {
               void api.emergencyStop();
+              app.clearAlignments();
               app.setArmed(false);
               app.toast("warn", "已请求急停；请确认运动与供电反馈");
             }}
@@ -313,7 +314,7 @@ function Shell() {
             {page === "encoder" && <Encoder />}
             {page === "homing" && <Homing />}
             {page === "axis" && <Axis />}
-            {page === "tuning" && <Tuning />}
+            {page === "tuning" && <Tuning key={app.motor} />}
             {page === "looptest" && <LoopTest />}
             {page === "storage" && <Storage />}
             {page === "registers" && <Registers />}

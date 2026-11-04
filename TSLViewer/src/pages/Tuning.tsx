@@ -1,6 +1,10 @@
+import TelemetryPanels from "../components/TelemetryPanels";
 import { useEffect, useMemo, useState } from "react";
+import MainboardPid from "./MainboardPid";
 
-import { api } from "../lib/api";
+import { api, HAS_TAURI } from "../lib/api";
+import { useMotorConfiguration } from "../lib/motor-configuration";
+import { controlApi } from "../lib/motor-control";
 import { useApp } from "../lib/app-store";
 import { TESLA_PROFILE } from "../lib/presets";
 import {
@@ -30,6 +34,7 @@ import {
   parsePidConfig,
   pwmHz,
   suggestPi,
+  s16,
 } from "../lib/units";
 import type { PidCfgPayload, StepCfgPayload, StepResult } from "../lib/types";
 
@@ -79,32 +84,38 @@ function StepChart({ data }: { data: StepResult }) {
 
 export default function TuningPage() {
   const app = useApp();
+  return <div className="grid" style={{gap:14}}><TelemetryPanels/>{app.mode !== "direct" ? <MainboardPid key={app.motor}/> : <DirectTuningPage/>}</div>;
+}
+function DirectTuningPage() {
+  const app = useApp();
   const p = TESLA_PROFILE;
 
-  const [curP, setCurP] = useState(p.pid.curP);
-  const [curI, setCurI] = useState(p.pid.curI);
-  const [velP, setVelP] = useState(p.pid.velP);
-  const [velI, setVelI] = useState(p.pid.velI);
-  const [posP, setPosP] = useState(p.pid.posP);
-  const [posI, setPosI] = useState(p.pid.posI);
-
-  const [curNp, setCurNp] = useState(1);
-  const [curNi, setCurNi] = useState(1);
-  const [velNp, setVelNp] = useState(1);
-  const [velNi, setVelNi] = useState(1);
-  const [posNp, setPosNp] = useState(1);
-  const [posNi, setPosNi] = useState(1);
-  const [velShift, setVelShift] = useState(8);
-  const [posSampling, setPosSampling] = useState(0);
-  const [overwrite, setOverwrite] = useState(false);
-  const [keepPos, setKeepPos] = useState(false);
-
-  const [torqueLimit, setTorqueLimit] = useState(p.limits.torqueMa);
-  const [fluxLimit, setFluxLimit] = useState(p.limits.fluxMa);
-  const [velLimit, setVelLimit] = useState(p.limits.velRpm);
-  const [uqUd, setUqUd] = useState(p.limits.uqUd);
+  const draft = useMotorConfiguration(app.motor);
+  const curP = draft.pid.torque_p; const setCurP = (value: number) => draft.setPid(p => ({ ...p, torque_p: value }));
+  const curI = draft.pid.torque_i; const setCurI = (value: number) => draft.setPid(p => ({ ...p, torque_i: value }));
+  const fluxP = draft.pid.flux_p; const setFluxP = (value: number) => draft.setPid(p => ({ ...p, flux_p: value }));
+  const fluxI = draft.pid.flux_i; const setFluxI = (value: number) => draft.setPid(p => ({ ...p, flux_i: value }));
+  const velP = draft.pid.vel_p; const setVelP = (value: number) => draft.setPid(p => ({ ...p, vel_p: value }));
+  const velI = draft.pid.vel_i; const setVelI = (value: number) => draft.setPid(p => ({ ...p, vel_i: value }));
+  const posP = draft.pid.pos_p; const setPosP = (value: number) => draft.setPid(p => ({ ...p, pos_p: value }));
+  const posI = draft.pid.pos_i; const setPosI = (value: number) => draft.setPid(p => ({ ...p, pos_i: value }));
+  const curNp = draft.pid.cur_norm_p; const setCurNp = (value: number) => draft.setPid(p => ({ ...p, cur_norm_p: value }));
+  const curNi = draft.pid.cur_norm_i; const setCurNi = (value: number) => draft.setPid(p => ({ ...p, cur_norm_i: value }));
+  const velNp = draft.pid.vel_norm_p; const setVelNp = (value: number) => draft.setPid(p => ({ ...p, vel_norm_p: value }));
+  const velNi = draft.pid.vel_norm_i; const setVelNi = (value: number) => draft.setPid(p => ({ ...p, vel_norm_i: value }));
+  const posNp = draft.pid.pos_norm_p; const setPosNp = (value: number) => draft.setPid(p => ({ ...p, pos_norm_p: value }));
+  const posNi = draft.pid.pos_norm_i; const setPosNi = (value: number) => draft.setPid(p => ({ ...p, pos_norm_i: value }));
+  const velShift = draft.pid.vel_shift; const setVelShift = (value: number) => draft.setPid(p => ({ ...p, vel_shift: value }));
+  const posSampling = draft.pid.pos_sampling; const setPosSampling = (value: number) => draft.setPid(p => ({ ...p, pos_sampling: value }));
+  const overwrite = draft.pid.overwrite_target; const setOverwrite = (value: boolean) => draft.setPid(p => ({ ...p, overwrite_target: value }));
+  const keepPos = draft.pid.keep_pos_target; const setKeepPos = (value: boolean) => draft.setPid(p => ({ ...p, keep_pos_target: value }));
+  const torqueLimit = draft.pid.torque_limit_ma; const setTorqueLimit = (value: number) => draft.setPid(p => ({ ...p, torque_limit_ma: value }));
+  const fluxLimit = draft.pid.flux_limit_ma; const setFluxLimit = (value: number) => draft.setPid(p => ({ ...p, flux_limit_ma: value }));
+  const velLimit = draft.pid.vel_limit_rpm; const setVelLimit = (value: number) => draft.setPid(p => ({ ...p, vel_limit_rpm: value }));
+  const uqUd = draft.pid.uq_ud_limit; const setUqUd = (value: number) => draft.setPid(p => ({ ...p, uq_ud_limit: value }));
   const [confirm, setConfirm] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [integrators, setIntegrators] = useState<number[]>([]);
 
   const [kind, setKind] = useState<"current" | "velocity">("current");
   const [amp, setAmp] = useState(500);
@@ -126,8 +137,8 @@ export default function TuningPage() {
   const suggestion = useMemo(() => suggestPi(rOhm, lUh, bw, fPwm), [rOhm, lUh, bw, fPwm]);
 
   const payload: PidCfgPayload = {
-    flux_p: curP,
-    flux_i: curI,
+    flux_p: fluxP,
+    flux_i: fluxI,
     torque_p: curP,
     torque_i: curI,
     vel_p: velP,
@@ -197,13 +208,18 @@ export default function TuningPage() {
               <Button
                 size="sm"
                 variant="ghost"
-                disabled={!app.connected}
+                disabled={!app.connected || !HAS_TAURI || app.jobRunning || app.motionActive}
                 onClick={async () => {
                   try {
-                    const snap = await api.readPid();
+                    const observed = await api.readPid();
+                    setIntegrators(observed.integrators ?? []);
+                    const parameters = await controlApi.parameters(app.motor);
+                    const snap = parameters.driver?.registers ?? observed;
                     const cfg = parsePidConfig(snap.config);
-                    const set = (v: number) => [(v >>> 16) & 0xffff, v & 0xffff] as const;
+                    const set = (v: number) => [s16(v >>> 16), s16(v & 0xffff)] as const;
                     const [tp, ti] = set(snap.torque_coeff);
+                    const [fp, fi] = set(snap.flux_coeff);
+                    setFluxP(fp); setFluxI(fi);
                     const [vp, vi] = set(snap.vel_coeff);
                     const [pp, pi] = set(snap.pos_coeff);
                     setCurP(tp);
@@ -243,16 +259,20 @@ export default function TuningPage() {
             <div className="pid-grid">
               <div className="pid-col accent">
                 <div className="pid-head">
-                  电流环 · 力矩 / 磁链
+                  电流环 · Iq / Id 独立系数
                   <span className="pid-gain">0x142 / 0x143</span>
                 </div>
                 <div className="row" style={{ gap: 6 }}>
-                  <Field label="P" style={{ flex: 1 }}>
-                    <NumField value={curP} onChange={setCurP} min={0} max={32767} width="100%" />
+                  <Field label="Iq P · 0x143" style={{ flex: 1 }}>
+                    <NumField value={curP} onChange={setCurP} min={-32768} max={32767} width="100%" />
                   </Field>
-                  <Field label="I" style={{ flex: 1 }}>
-                    <NumField value={curI} onChange={setCurI} min={0} max={32767} width="100%" />
+                  <Field label="Iq I · 0x143" style={{ flex: 1 }}>
+                    <NumField value={curI} onChange={setCurI} min={-32768} max={32767} width="100%" />
                   </Field>
+                </div>
+                <div className="row" style={{ gap: 6 }}>
+                  <Field label="Id P · 0x142" style={{ flex: 1 }}><NumField value={fluxP} onChange={setFluxP} min={-32768} max={32767} width="100%" /></Field>
+                  <Field label="Id I · 0x142" style={{ flex: 1 }}><NumField value={fluxI} onChange={setFluxI} min={-32768} max={32767} width="100%" /></Field>
                 </div>
                 <Field label="P 归一化">
                   <SelectField value={curNp} onChange={setCurNp} width="100%" options={CUR_NORM_LABELS.map((l, i) => ({ value: i, label: l }))} />
@@ -263,6 +283,7 @@ export default function TuningPage() {
                 <span className="pid-gain">
                   Kp={fmt(coefToGain(curP, pFrac(curNp)), 4)} · Ki={fmt(coefToGain(curI, iFrac(curNi, true)), 4)}
                 </span>
+                <span className="pid-gain">Id Kp={fmt(coefToGain(fluxP, pFrac(curNp)), 4)} · Ki={fmt(coefToGain(fluxI, iFrac(curNi, true)), 4)}</span>
               </div>
 
               <div className="pid-col">
@@ -272,10 +293,10 @@ export default function TuningPage() {
                 </div>
                 <div className="row" style={{ gap: 6 }}>
                   <Field label="P" style={{ flex: 1 }}>
-                    <NumField value={velP} onChange={setVelP} min={0} max={32767} width="100%" />
+                    <NumField value={velP} onChange={setVelP} min={-32768} max={32767} width="100%" />
                   </Field>
                   <Field label="I" style={{ flex: 1 }}>
-                    <NumField value={velI} onChange={setVelI} min={0} max={32767} width="100%" />
+                    <NumField value={velI} onChange={setVelI} min={-32768} max={32767} width="100%" />
                   </Field>
                 </div>
                 <Field label="P 归一化">
@@ -296,10 +317,10 @@ export default function TuningPage() {
                 </div>
                 <div className="row" style={{ gap: 6 }}>
                   <Field label="P" style={{ flex: 1 }}>
-                    <NumField value={posP} onChange={setPosP} min={0} max={32767} width="100%" />
+                    <NumField value={posP} onChange={setPosP} min={-32768} max={32767} width="100%" />
                   </Field>
                   <Field label="I" style={{ flex: 1 }}>
-                    <NumField value={posI} onChange={setPosI} min={0} max={32767} width="100%" />
+                    <NumField value={posI} onChange={setPosI} min={-32768} max={32767} width="100%" />
                   </Field>
                 </div>
                 <Field label="P 归一化">
@@ -345,39 +366,54 @@ export default function TuningPage() {
 
             <div className="divider" />
             <div className="row" style={{ gap: 10, alignItems: "flex-end" }}>
-              <Field label="力矩限幅" hint={`${countsFromMa(torqueLimit, app.cal.maPerCount)} counts`}>
+              <Field label="驱动器Iq上限" hint={`${countsFromMa(torqueLimit, app.cal.maPerCount)} counts`}>
                 <NumField value={torqueLimit} onChange={setTorqueLimit} min={0} max={1600} step={10} unit="mA" />
               </Field>
-              <Field label="磁链限幅">
+              <Field label="驱动器Id上限">
                 <NumField value={fluxLimit} onChange={setFluxLimit} min={0} max={1600} step={10} unit="mA" />
               </Field>
-              <Field label="速度限幅" hint={`${Math.round(velLimit * app.cal.countsPerRpm)}`}>
+              <Field label="驱动器速度上限" hint={`${Math.round(velLimit * app.cal.countsPerRpm)}`}>
                 <NumField value={velLimit} onChange={setVelLimit} min={0} max={60000} step={500} unit="RPM" />
               </Field>
               <Field label="电压限幅" hint={`${fmt((Math.min(uqUd, 18900) / 18900) * 100, 1)}% 调制`}>
-                <NumField value={uqUd} onChange={setUqUd} min={0} max={32767} step={500} />
+                <NumField value={uqUd} onChange={setUqUd} min={0} max={65535} step={500} />
               </Field>
             </div>
 
             <div className="divider" />
             <Check checked={confirm} onChange={setConfirm}>
-              确认写入 PID 与限幅（会清零四个积分器）
+              已断使能且电机静止；应用驱动器档案并读回验证（清零四个积分器）
             </Check>
+            <div className="tiny muted">积分器回读（Iq / Id / 速度 / 位置）：{integrators.length === 4 ? integrators.map(v => `0x${(v >>> 0).toString(16).toUpperCase().padStart(8, "0")}`).join(" / ") : "尚未读取"}。停机应用PID时逐项清零并验证，保持负载时不清零。</div>
             <div className="row" style={{ gap: 8 }}>
               <Button
                 variant="primary"
                 icon={<Icon.Save width={14} height={14} />}
-                disabled={!app.connected || !app.armed || !confirm || app.jobRunning}
+                disabled={!app.connected || !HAS_TAURI || !app.armed || !confirm || app.jobRunning || app.motionActive}
                 onClick={() => void app.runJob("pid", payload)}
               >
-                写入参数
+                应用参数
               </Button>
+              {app.motor === 9 && <Button
+                variant="ghost"
+                disabled={app.jobRunning}
+                onClick={() => {
+                  setCurP(64); setCurI(48); setFluxP(64); setFluxI(48);
+                  setVelP(500); setVelI(250); setPosP(500); setPosI(0);
+                  setCurNp(1); setCurNi(1); setVelNp(1); setVelNi(1);
+                  setPosNp(1); setPosNi(1); setVelShift(8); setPosSampling(0);
+                  setOverwrite(false); setKeepPos(false);
+                  setTorqueLimit(500); setFluxLimit(0); setVelLimit(2000);
+                  setConfirm(false); setLoaded(false);
+                  app.toast("ok", "已载入 M9 找零 PID 与限流，请确认后写入并从芯片读取校验");
+                }}
+              >载入 M9 找零参数</Button>}
               <Button
                 variant="ghost"
                 disabled={!app.armed}
                 onClick={() => {
-                  setCurP(p.pid.curP);
-                  setCurI(p.pid.curI);
+                  setCurP(p.pid.curP); setFluxP(p.pid.curP);
+                  setCurI(p.pid.curI); setFluxI(p.pid.curI);
                   setVelP(p.pid.velP);
                   setVelI(p.pid.velI);
                   setPosP(p.pid.posP);
@@ -402,8 +438,8 @@ export default function TuningPage() {
                 variant="ghost"
                 disabled={!app.armed}
                 onClick={() => {
-                  setCurP(p.bench.p);
-                  setCurI(p.bench.i);
+                  setCurP(p.bench.p); setFluxP(p.bench.p);
+                  setCurI(p.bench.i); setFluxI(p.bench.i);
                   setCurNp(1);
                   setCurNi(1);
                   app.toast("ok", "已载入实测电流环 359/129");
@@ -413,6 +449,7 @@ export default function TuningPage() {
               </Button>
               {loaded && <span className="tiny muted">已从芯片读取</span>}
             </div>
+            <Notice tone="warn">此页拥有驱动器上限，运动页只保存任务限制；从芯片读取时保留档案上限，不把任务生效值反写成档案。归一化、增益和积分器修改要求安全停机。</Notice>
             <Notice tone="danger">
               新上位机默认“电流归一化 = No shift（Q16.0）”。若把 64/48 或 359/129 直接写进去而不改成 <b>Shift by 8</b>，
               实际增益会放大 256 倍。

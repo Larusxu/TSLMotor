@@ -1710,3 +1710,38 @@ select optgroup {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* 找零参数：卡片只占半幅宽，4 列会挤，改成按可用宽度自适应列数 */
+.param-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin-bottom: 10px;
+}
+/* Main-controller pages use the same spacing and surfaces as 02c23d9. */
+.homing-split { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:start; }
+.motion-travel-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); gap:14px; align-items:start; }
+.btn.permit-on { color:var(--ok); border-color:var(--ok); background:var(--ok-soft); }
+.controller-summary { display:grid; gap:8px; }
+.controller-summary > .row-wrap { column-gap:18px; row-gap:6px; }
+.controller-summary b { color:var(--text-2); font-weight:500; }
+.controller-diagnostics { min-width:0; font-size:11px; color:var(--text-3); }
+.controller-diagnostics > summary { cursor:pointer; width:fit-content; padding:4px 0; }
+.controller-diagnostics[open] > summary { margin-bottom:8px; }
+.controller-diagnostics .kv { overflow-wrap:anywhere; }
+.arrival-feedback { display:grid; gap:8px; padding:10px; background:var(--inset); border:1px solid var(--line-soft); border-radius:var(--r-sm); font-size:11px; color:var(--text-2); }
+.arrival-feedback > b { font-weight:600; color:var(--text); }
+.config-readout { min-height:30px; display:flex; align-items:center; padding:5px 9px; background:var(--inset); border:1px solid var(--line); border-radius:var(--r-xs); color:var(--text-2); font-size:11px; }
+.table-scroll { min-width:0; overflow-x:auto; }
+.pid-toolbar { justify-content:flex-end; }
+.motor-config-split { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; align-items:start; }
+.motor-config-section { display:grid; gap:12px; min-width:0; }
+.motor-config-heading { color:var(--text-2); font-size:12px; font-weight:600; }
+.hold-motion-button { touch-action:none; user-select:none; }
+.hold-motion-button[aria-pressed="true"] { background:var(--accent-soft); border-color:var(--accent); }
+.hold-motion-button:active { transform:none; }
+.motion-message-slot { height:68px; overflow:auto; }
+.homing-message-slot { height:116px; overflow:auto; display:flex; flex-direction:column; gap:8px; }
+.controller-summary > .row-wrap { min-height:24px; }
+@media(max-width:1040px) { .motor-config-split { grid-template-columns:minmax(0,1fr); gap:18px; } }
+@media(max-width:1040px) { .motion-travel-layout, .homing-split { grid-template-columns:minmax(0,1fr); } }

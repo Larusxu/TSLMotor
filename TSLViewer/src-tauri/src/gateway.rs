@@ -109,7 +109,7 @@ impl Transport {
                 header.push(self.byte(end)?);
             }
             if header[0] != 1 || header[1] != 0x41 || header[2] > 135 {
-                return Err(err("主控 RTU 头错误"));
+                return Err(err(format!("主控 RTU 头错误 header={header:02x?} motor={motor} op={op}")));
             }
             let n = header[2] as usize;
             for _ in 0..n + 2 {

@@ -176,6 +176,7 @@ pub fn cpr_inv_for(cpr: u32) -> u32 {
 }
 
 pub fn setup_encoder(ctx: &mut Ctx, cfg: &EncoderCfg) -> Result<String> {
+    crate::motor_parameters::mark_inconsistent(&ctx.link,"编码器配置正在改变，请重新应用并核对PID档案");
     ctx.total = 12;
     let base_mm = regs::motor_motion(regs::MODE_PWM_OFF, cfg.poles, false, false);
 
@@ -300,8 +301,11 @@ pub fn setup_encoder(ctx: &mut Ctx, cfg: &EncoderCfg) -> Result<String> {
     let label = "PWM 周期 / 电流采样增益";
     ctx.begin(label);
     let period = regs::mcc_pwm_period(cfg.pwm_max_count);
-    ctx.link.write_verified(regs::MCC_PWM_PERIOD, period, 0x0000_FFFF)?;
-    ctx.link.write_verified(regs::MCC_ADC_CSA_GAIN, cfg.csa_gain & 0x03, 0x03)?;
+    if !ctx.link.write_verified(regs::MCC_PWM_PERIOD, period, 0x0000_FFFF)? ||
+       !ctx.link.write_verified(regs::MCC_ADC_CSA_GAIN, cfg.csa_gain & 0x03, 0x03)? {
+        ctx.fail(label, "PWM周期或CSA增益回读不一致");
+        return Err(LinkError::ValueError("PWM周期或CSA增益写入校验失败".into()));
+    }
     let f_pwm = 120_000_000.0 / cfg.pwm_max_count.max(1) as f64;
     ctx.ok(
         label,
@@ -361,14 +365,14 @@ pub fn setup_encoder(ctx: &mut Ctx, cfg: &EncoderCfg) -> Result<String> {
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct PidCfg {
-    pub flux_p: u16,
-    pub flux_i: u16,
-    pub torque_p: u16,
-    pub torque_i: u16,
-    pub vel_p: u16,
-    pub vel_i: u16,
-    pub pos_p: u16,
-    pub pos_i: u16,
+    pub flux_p: i32,
+    pub flux_i: i32,
+    pub torque_p: i32,
+    pub torque_i: i32,
+    pub vel_p: i32,
+    pub vel_i: i32,
+    pub pos_p: i32,
+    pub pos_i: i32,
     pub cur_norm_p: u8,
     pub cur_norm_i: u8,
     pub vel_norm_p: u8,
@@ -409,84 +413,48 @@ pub fn counts_from_ma(ma: f64, ma_per_count: f64) -> i32 {
 
 /// Write the whole PID + limits block and verify each register.
 pub fn apply_pid(ctx: &mut Ctx, c: &PidCfg) -> Result<serde_json::Value> {
-    ctx.total = 8;
-    let mut results: Vec<serde_json::Value> = Vec::new();
-
-    let label = "PID_CONFIG (0x140)";
-    ctx.begin(label);
-    let cfg = compose_pid_config(c);
-    let ok = ctx.link.write_verified(regs::FOC_PID_CONFIG, cfg, 0x007F_FFFF)?;
-    ctx.ok(label, format!("0x{cfg:08X}"));
-    results.push(serde_json::json!({ "addr": "0x140", "ok": ok, "value": format!("0x{cfg:08X}") }));
-
-    let label = "电流环系数 (0x142/0x143)";
-    ctx.begin(label);
-    let flux = ((c.flux_p as u32) << 16) | c.flux_i as u32;
-    let torque = ((c.torque_p as u32) << 16) | c.torque_i as u32;
-    let a = ctx.link.write_verified(regs::FOC_PID_FLUX_COEFF, flux, 0xFFFF_FFFF)?;
-    let b = ctx.link.write_verified(regs::FOC_PID_TORQUE_COEFF, torque, 0xFFFF_FFFF)?;
-    ctx.ok(label, format!("P={}/{} I={}/{}", c.flux_p, c.torque_p, c.flux_i, c.torque_i));
-    results.push(serde_json::json!({ "addr": "0x142/0x143", "ok": a && b }));
-
-    let label = "速度环 / 位置环系数";
-    ctx.begin(label);
-    let vel = ((c.vel_p as u32) << 16) | c.vel_i as u32;
-    let pos = ((c.pos_p as u32) << 16) | c.pos_i as u32;
-    let a = ctx.link.write_verified(regs::FOC_PID_VELOCITY_COEFF, vel, 0xFFFF_FFFF)?;
-    let b = ctx.link.write_verified(regs::FOC_PID_POSITION_COEFF, pos, 0xFFFF_FFFF)?;
-    ctx.ok(label, format!("速度 P={} I={} · 位置 P={} I={}", c.vel_p, c.vel_i, c.pos_p, c.pos_i));
-    results.push(serde_json::json!({ "addr": "0x145/0x146", "ok": a && b }));
-
-    let label = "力矩/磁链限幅 (0x14A)";
-    ctx.begin(label);
-    let t_raw = counts_from_ma(c.torque_limit_ma, c.ma_per_count).clamp(0, 0x7FFF) as u32;
-    let f_raw = counts_from_ma(c.flux_limit_ma, c.ma_per_count).clamp(0, 0x7FFF) as u32;
-    let lim = (t_raw << 16) | f_raw;
-    let ok = ctx.link.write_verified(regs::FOC_PID_TORQUE_FLUX_LIMITS, lim, 0x7FFF_7FFF)?;
-    ctx.ok(
-        label,
-        format!(
-            "力矩 {:.0} mA → {} counts · 磁链 {:.0} mA → {}",
-            c.torque_limit_ma, t_raw, c.flux_limit_ma, f_raw
-        ),
-    );
-    results.push(serde_json::json!({ "addr": "0x14A", "ok": ok, "value": format!("0x{lim:08X}") }));
-
-    let label = "速度限幅 (0x14B)";
-    ctx.begin(label);
-    let v = (c.vel_limit_rpm * c.counts_per_rpm).round().clamp(0.0, 0x7FFF_FFFF as f64) as u32;
-    let ok = ctx.link.write_verified(regs::FOC_PID_VELOCITY_LIMIT, v, 0x7FFF_FFFF)?;
-    ctx.ok(label, format!("{:.0} RPM → {}", c.vel_limit_rpm, v));
-    results.push(serde_json::json!({ "addr": "0x14B", "ok": ok, "value": format!("0x{v:08X}") }));
-
-    let label = "电压矢量限幅 (0x149)";
-    ctx.begin(label);
-    let ok = ctx.link.write_verified(regs::FOC_PID_UQ_UD_LIMITS, c.uq_ud_limit & 0xFFFF, 0xFFFF)?;
-    let eff = (c.uq_ud_limit & 0xFFFF).min(18_900);
-    ctx.ok(label, format!("{} counts ≈ {:.1}% 调制", c.uq_ud_limit & 0xFFFF, eff as f64 / 189.0));
-    results.push(serde_json::json!({ "addr": "0x149", "ok": ok }));
-
-    let label = "清零积分器";
-    ctx.begin(label);
-    let _ = ctx.link.write_reg(regs::FOC_PID_TORQUE_INTEGRATOR, 0);
-    let _ = ctx.link.write_reg(regs::FOC_PID_FLUX_INTEGRATOR, 0);
-    let _ = ctx.link.write_reg(regs::FOC_PID_VELOCITY_INTEGRATOR, 0);
-    let _ = ctx.link.write_reg(regs::FOC_PID_POSITION_INTEGRATOR, 0);
-    ctx.ok(label, "0x15D..0x160 = 0");
-
-    let label = "回读校验";
-    ctx.begin(label);
-    let rb = ctx.link.read_reg_retry(regs::FOC_PID_CONFIG, 3)?;
-    let torque_rb = ctx.link.read_reg_retry(regs::FOC_PID_TORQUE_COEFF, 3)?;
-    ctx.ok(
-        label,
-        format!("0x140=0x{rb:08X} 0x143=0x{torque_rb:08X}"),
-    );
-
-    Ok(serde_json::json!({ "checks": results }))
+    use crate::motor_parameters::{self as mp, RegisterWrite};
+    let valid = [c.torque_limit_ma,c.flux_limit_ma,c.vel_limit_rpm,c.ma_per_count,c.counts_per_rpm].iter().all(|v|v.is_finite()&&*v>=0.0)
+        && (c.ma_per_count-mp::MA).abs()<0.00001 && (c.counts_per_rpm-mp::VEL).abs()<0.1
+        && c.cur_norm_p<=1 && c.cur_norm_i<=1 && c.vel_norm_p<=3 && c.vel_norm_i<=3
+        && c.pos_norm_p<=3 && c.pos_norm_i<=3 && c.vel_shift<=15 && c.pos_sampling<=127
+        && c.uq_ud_limit<=65535 && [c.flux_p,c.flux_i,c.torque_p,c.torque_i,c.vel_p,c.vel_i,c.pos_p,c.pos_i].iter().all(|v|(-32768..=32767).contains(v));
+    if !valid {return Err(LinkError::ValueError("Invalid PID units, limits or normalization".into()));}
+    mp::ensure_stopped(ctx.link.as_ref()).map_err(LinkError::ValueError)?;
+    let t=counts_from_ma(c.torque_limit_ma,c.ma_per_count);
+    let f=counts_from_ma(c.flux_limit_ma,c.ma_per_count);
+    let v=(c.vel_limit_rpm*c.counts_per_rpm).round();
+    if t>0x7fff || f>0x7fff || v>0x7fffffff as f64 {return Err(LinkError::ValueError("PID limits out of register range".into()));}
+    let plan=vec![
+        RegisterWrite{reg:0x140,value:compose_pid_config(c),mask:0x7fffff},
+        RegisterWrite{reg:0x142,value:((c.flux_p as u32)&0xffff)<<16|(c.flux_i as u32&0xffff),mask:u32::MAX},
+        RegisterWrite{reg:0x143,value:((c.torque_p as u32)&0xffff)<<16|(c.torque_i as u32&0xffff),mask:u32::MAX},
+        RegisterWrite{reg:0x145,value:((c.vel_p as u32)&0xffff)<<16|(c.vel_i as u32&0xffff),mask:u32::MAX},
+        RegisterWrite{reg:0x146,value:((c.pos_p as u32)&0xffff)<<16|(c.pos_i as u32&0xffff),mask:u32::MAX},
+        RegisterWrite{reg:0x14a,value:(t as u32)<<16|f as u32,mask:0x7fff7fff},
+        RegisterWrite{reg:0x14b,value:v as u32,mask:0x7fffffff},
+        RegisterWrite{reg:0x149,value:c.uq_ud_limit,mask:0xffff},
+    ];
+    let result=(|| {
+        ctx.total=plan.len()+4;
+        for w in &plan {if ctx.cancelled(){return Err("PID apply cancelled".to_string());}
+            let label=format!("PID 0x{:03X}",w.reg);ctx.begin(&label);
+            mp::execute(ctx.link.as_ref(),std::slice::from_ref(w))?;ctx.ok(&label,"readback verified");
+        }
+        for reg in [0x15d,0x15e,0x15f,0x160] {
+            let label=format!("Integrator 0x{reg:03X}");ctx.begin(&label);
+            // Safe only because ensure_stopped rejected loaded holding/motion.
+            mp::execute(ctx.link.as_ref(),&[RegisterWrite{reg,value:0,mask:u32::MAX}])?;
+            ctx.ok(&label,"zero verified");
+        }
+        let snap=read_pid_raw(&ctx.link).map_err(|e|e.to_string())?;
+        mp::commit_driver(&ctx.link,snap,c.ma_per_count,c.counts_per_rpm);
+        Ok(serde_json::json!({"checks":plan.iter().map(|w|serde_json::json!({"addr":format!("0x{:03X}",w.reg),"ok":true})).collect::<Vec<_>>() }))
+    })();
+    result.map_err(|e:String|{mp::mark_inconsistent(&ctx.link,&e);LinkError::ValueError(e)})
 }
 
-#[derive(Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct PidSnapshot {
     pub config: u32,
     pub flux_coeff: u32,
@@ -496,9 +464,16 @@ pub struct PidSnapshot {
     pub tf_limits: u32,
     pub vel_limit: u32,
     pub uq_ud_limit: u32,
+    #[serde(default)]
+    pub integrators: [u32; 4],
 }
 
 pub fn read_pid(link: &Link) -> Result<PidSnapshot> {
+    let snap=read_pid_raw(link)?;
+    crate::motor_parameters::observe(link,snap.clone()).map_err(LinkError::ValueError)?;
+    Ok(snap)
+}
+pub fn read_pid_raw(link: &Link) -> Result<PidSnapshot> {
     Ok(PidSnapshot {
         config: link.read_reg_retry(regs::FOC_PID_CONFIG, 3)?,
         flux_coeff: link.read_reg_retry(regs::FOC_PID_FLUX_COEFF, 3)?,
@@ -508,6 +483,7 @@ pub fn read_pid(link: &Link) -> Result<PidSnapshot> {
         tf_limits: link.read_reg_retry(regs::FOC_PID_TORQUE_FLUX_LIMITS, 3)?,
         vel_limit: link.read_reg_retry(regs::FOC_PID_VELOCITY_LIMIT, 3)?,
         uq_ud_limit: link.read_reg_retry(regs::FOC_PID_UQ_UD_LIMITS, 3)?,
+        integrators: [link.read_reg_retry(0x15d, 2)?,link.read_reg_retry(0x15e, 2)?,link.read_reg_retry(0x15f, 2)?,link.read_reg_retry(0x160, 2)?],
     })
 }
 
@@ -584,6 +560,7 @@ fn read_encoder_raw(link: &Link, frame_bits: u32) -> Result<i32> {
 }
 
 pub fn calibrate_phi_e(ctx: &mut Ctx, cfg: &CalibCfg, frame_bits: u32) -> Result<CalibResult> {
+    crate::motor_parameters::mark_inconsistent(&ctx.link,"对齐流程使用临时限幅，结束后请重新应用PID档案");
     let angles: Vec<i32> = {
         let mut v = Vec::new();
         let mut a = 0;
@@ -600,7 +577,10 @@ pub fn calibrate_phi_e(ctx: &mut Ctx, cfg: &CalibCfg, frame_bits: u32) -> Result
     let label = "基础配置（电流环/限幅）";
     ctx.begin(label);
     let cnt = counts_from_ma(cfg.flux_ma, cfg.ma_per_count).clamp(1, 8192) as u32;
-    ctx.link.write_verified(regs::MCC_ADC_CSA_GAIN, 3, 0x03)?;
+    if !ctx.link.write_verified(regs::MCC_ADC_CSA_GAIN, 3, 0x03)? {
+        ctx.fail(label, "CSA增益未成功写为4×");
+        return Err(LinkError::ValueError("CSA增益写入校验失败，请重新配置编码器后再对齐".into()));
+    }
     ctx.link.write_verified(regs::FOC_PID_FLUX_COEFF, (64 << 16) | 48, 0xFFFF_FFFF)?;
     ctx.link.write_verified(regs::FOC_PID_TORQUE_COEFF, (64 << 16) | 48, 0xFFFF_FFFF)?;
     // limit = max flux so the lock current is reachable, but never above 4x full scale
@@ -734,6 +714,9 @@ pub fn calibrate_phi_e(ctx: &mut Ctx, cfg: &CalibCfg, frame_bits: u32) -> Result
             ctx.ok(label, format!("0x{:04X}", result.offset));
         } else {
             ctx.fail(label, "写入校验失败");
+            let _ = ctx.link.write_reg(regs::FOC_PID_TORQUE_FLUX_TARGET, 0);
+            let _ = ctx.link.write_reg(regs::MCC_MOTOR_MOTION, regs::motor_motion(regs::MODE_PWM_OFF, cfg.poles, false, false));
+            return Err(LinkError::ValueError("对齐偏移写入校验失败，未完成对齐".into()));
         }
     } else {
         ctx.info(label, "未写回（干跑或拟合质量不足）");

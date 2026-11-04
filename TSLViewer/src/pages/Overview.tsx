@@ -2,8 +2,6 @@
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app-store";
-import { SIGNALS } from "../lib/presets";
-import { Scope } from "../components/Scope";
 import Controller from "../components/Controller";
 import {
   Badge,
@@ -15,8 +13,6 @@ import {
   KV,
   Notice,
   NumField,
-  Segmented,
-  SelectField,
   Stat,
 } from "../components/ui";
 import { STATUS_BITS } from "../lib/registers";
@@ -41,10 +37,8 @@ export default function Overview() {
   const app = useApp();
   const [regs, setRegs] = useState<Record<number, number>>({});
   const [, tick] = useState(0);
-  const [paused, setPaused] = useState(false);
   const [target, setTarget] = useState(300);
   const [confirmRun, setConfirmRun] = useState(false);
-  const [picker, setPicker] = useState<number>(0);
   const history = useRef<number[][]>([[], [], [], []]);
 
   const polling = useRef(false);
@@ -101,7 +95,6 @@ export default function Overview() {
   const iS = (regs[0x171] ?? 0) & 0xffff;
 
   const activeFaults = STATUS_BITS.filter(([bit, , tone]) => tone !== "info" && ((status >>> bit) & 1) === 1);
-  const assigned = app.channels.map((id, ch) => ({ ch, sig: SIGNALS.find((s) => s.id === id) ?? null }));
 
   return (
     <div className="grid" style={{ gap: 14 }}>
@@ -134,95 +127,7 @@ export default function Overview() {
         />
       </div>
 
-      <div className="grid split-2-1" style={{ alignItems: "stretch" }}>
-        <Card
-          className="fill"
-          title="实时遥测"
-          sub="LIVE TELEMETRY"
-          right={
-            <div className="row" style={{ gap: 6 }}>
-              <Segmented
-                value={String(app.windowMs)}
-                onChange={(v) => app.setWindowMs(Number(v))}
-                options={[
-                  { value: "2000", label: "2s" },
-                  { value: "5000", label: "5s" },
-                  { value: "15000", label: "15s" },
-                  { value: "60000", label: "60s" },
-                ]}
-              />
-              <Button size="sm" variant="ghost" onClick={() => setPaused((p) => !p)}>
-                {paused ? "继续" : "暂停"}
-              </Button>
-              {app.streaming ? (
-                <Button size="sm" variant="ghost" onClick={() => void app.stopStream()}>
-                  停止
-                </Button>
-              ) : (
-                <Button size="sm" variant="primary" onClick={() => void app.startStream()}>
-                  开始采集
-                </Button>
-              )}
-            </div>
-          }
-        >
-          <Scope
-            store={app.scope}
-            channels={assigned.filter((a) => a.sig).map((a) => a.ch)}
-            windowMs={app.windowMs}
-            paused={paused}
-            height="fill"
-            onToggleChannel={(ch) => app.setChannel(ch, null)}
-          />
-          <div className="row" style={{ marginTop: 10, gap: 8 }}>
-            <Badge tone={app.streaming ? "accent" : "neutral"} dot={app.streaming ? "live" : undefined}>
-              {app.streaming ? `${app.stats?.frame_rate.toFixed(0) ?? 0} 帧/s` : "未采集"}
-            </Badge>
-            <span className="tiny muted">
-              触发 {app.sampleHz} Hz · sampling={app.sampling} · 丢弃 {app.stats?.rtmi_dropped ?? 0} 字节
-            </span>
-          </div>
-        </Card>
-
-        <div className="stack">
-          <Card title="信号通道" sub="RTMI CHANNELS" right={<Badge tone="neutral">7 可用</Badge>}>
-            <div className="stack" style={{ gap: 8 }}>
-              {[0, 1, 2, 3].map((ch) => (
-                <div className="row" key={ch} style={{ gap: 8 }}>
-                  <span className="mono tiny" style={{ width: 26, color: "var(--text-4)" }}>
-                    CH{ch}
-                  </span>
-                  <SelectField
-                    value={app.channels[ch] ?? ""}
-                    onChange={(v) => app.setChannel(ch, v === "" ? null : v)}
-                    options={[
-                      { value: "", label: "— 未使用 —" },
-                      ...SIGNALS.map((s) => ({ value: s.id, label: `${s.label} (${s.unit})` })),
-                    ]}
-                  />
-                </div>
-              ))}
-              <div className="row" style={{ gap: 8 }}>
-                <Field label="采样率">
-                  <SelectField
-                    value={app.sampleHz}
-                    onChange={app.setSampleHz}
-                    options={[250, 500, 1000, 2000, 4000].map((v) => ({
-                      value: v,
-                      label: `${v} Hz`,
-                    }))}
-                  />
-                </Field>
-                <Field label="同步">
-                  <SelectField value="pwm_z" onChange={() => undefined} options={[{ value: "pwm_z", label: "PWM_Z 起点" }]} />
-                </Field>
-              </div>
-              <Notice tone="warn">
-                串口 115200 下 4 通道 × 5 字节 ≈ 1.7 ms，触发周期需大于它。想上 1 kHz 请用 921600 以上。
-              </Notice>
-            </div>
-          </Card>
-
+      <div className="grid split-2-1"><div className="stack">
           <Card title="手动运行" sub="VELOCITY MODE">
             <div className="stack" style={{ gap: 10 }}>
               <Field label="目标转速" hint="RPM">
@@ -383,31 +288,7 @@ export default function Overview() {
             <Notice>
               Tesla 平台默认：极对数 1、16384 CPR、4× CSA → 0.20131 mA/LSB、305.4 counts/RPM、25 kHz PWM。
             </Notice>
-            <div className="row" style={{ gap: 6 }}>
-              <span className="tiny muted">信号极性</span>
-              <Segmented
-                value={String(app.cal.polarity)}
-                onChange={(v) => app.setCal({ polarity: Number(v) })}
-                options={[
-                  { value: "1", label: "正向" },
-                  { value: "-1", label: "反向" },
-                ]}
-              />
-              <span style={{ flex: 1 }} />
-              <span className="tiny muted">CH</span>
-              <select
-                value={picker}
-                onChange={(e) => setPicker(Number(e.target.value))}
-                className="mono"
-                style={{ background: "var(--inset)", border: "1px solid var(--line)", borderRadius: 6, padding: "2px 4px" }}
-              >
-                {assigned.map((a) => (
-                  <option key={a.ch} value={a.ch}>
-                    CH{a.ch}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {app.mode !== "direct" && <div className="tiny muted">公共额定转速参考：{app.maximumRpm ?? "未读取"} rpm；任务转速仅受当前电机已保存的长期转速限幅约束。</div>}
           </div>
         </Card>
       </div>

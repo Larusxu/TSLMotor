@@ -1,8 +1,13 @@
 import {useEffect,useState} from "react";
 import {useApp} from "../lib/app-store";
+import {semanticFresh} from "../lib/semantic-state";
 
 export default function HandIdentity(){
   const app=useApp();
+  const valid=app.connected&&app.motorValidity&&Date.now()-app.motorValidity.at<2000?app.motorValidity:null;
+  // The selected motor's complete semantic snapshot is authoritative. The
+  // legacy bitmap deliberately reports zero while drive-enable is pending.
+  const state=app.connected&&app.semantic.motor===app.motor&&semanticFresh(app.semantic)?app.semantic.state:null;
   const [editing,setEditing]=useState(false);
   const [value,setValue]=useState("");
   const [saving,setSaving]=useState(false);
@@ -24,5 +29,9 @@ export default function HandIdentity(){
         {app.connected&&app.handId!==null?`${app.handId} · 修改`:"—"}
       </button>}
     </div>
+    {app.mode!=="direct"&&<>
+      <div className="rail-meta"><span>编码器 · M{app.motor}</span><b>{state?(state.align_valid?"有效":"待标定"):valid?(valid.encoder&(1<<(app.motor-1))?"有效":"待标定"):"未确认"}</b></div>
+      <div className="rail-meta"><span>找零 · M{app.motor}</span><b>{state?(state.span_valid&&state.home_neg_valid&&state.home_pos_valid?"有效":"待找零"):valid?(valid.homing&(1<<(app.motor-1))?"有效":"待找零"):"未确认"}</b></div>
+    </>}
   </>;
 }

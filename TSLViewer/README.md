@@ -29,7 +29,31 @@ npm run app:build    # 生成 Windows 安装包（msi / nsis）
 .\scripts\start.ps1
 ```
 
-程序不存在时会提示先执行 `npm run app:exe`（只构建不打包）；需要重新构建、开发模式或浏览器预览时用上面的 npm 命令。
+程序不存在时会提示先执行 `npm run app:exe`（只构建不打包）；需要重新构建、开发模式或浏览器预览时用下面的脚本或 npm 命令。
+
+### 1.2 构建脚本
+
+`scripts\build.bat` 双击即可（等价于 `.\scripts\build.ps1`）：检查工具链 → 检查是否有 TSL Viewer 正在运行（会锁住 exe）→ 构建 → 报告产物与耗时，全部输出同时落盘到 `build-logs\build-<时间戳>.log`。
+
+```powershell
+.\scripts\build.ps1                # 只构建 exe（tauri build --no-bundle），不打包
+.\scripts\build.ps1 -Test          # 先跑 cargo test --lib，通过才构建
+.\scripts\build.ps1 -Clean         # 先删 dist\ 与 release 产物再构建
+.\scripts\build.ps1 -StopRunning   # 自动关闭正在运行的 TSL Viewer（否则链接会失败）
+.\scripts\build.ps1 -Launch        # 构建完直接启动
+.\scripts\build.ps1 -Bundle        # 额外生成 NSIS 安装包（发版用）
+```
+
+| 选项 | 作用 |
+| --- | --- |
+| 默认 | `npm run app:exe`：tsc 类型检查 + vite + cargo release，**只出 exe** |
+| `-Bundle` | 改跑 `npm run app:build`，额外产出 `bundle\nsis\TSL Viewer_<版本>_x64-setup.exe` |
+| `-Test` | 编译前跑 Rust 单测，失败立即终止，不会产出半新半旧的 exe |
+| `-Clean` | 删 `dist\`、`release\tslviewer.exe`、`bundle\`；**不跑 `cargo clean`**（那会连依赖一起删，下次要重编十几分钟） |
+| `-StopRunning` | 结束正在运行的 `tslviewer.exe`；不加则检测到就报错退出，不会偷偷关掉你正在看的窗口 |
+| `-Launch` | 成功后直接启动新程序 |
+
+退出码：0 = 成功，非 0 = 失败（`build.bat` 会 `pause` 留住报错）。
 
 产物位置：
 
@@ -205,8 +229,11 @@ TSLViewer/
 │  ├─ src/lib.rs              Tauri 命令与任务调度
 │  └─ tauri.conf.json         窗口默认 1440×900，最小 1120×700；启动时按显示器自动收敛
 ├─ scripts/
+│  ├─ build.ps1 / build.bat   构建：默认只出 exe，-Bundle 才打安装包
 │  ├─ start.ps1 / start.bat   一键启动：直接运行已构建的 tslviewer.exe
+│  ├─ start-web.ps1 / .bat    浏览器预览（vite dev server）
 │  └─ test_gateway_ui.py      UI 回归（需 Vite 已启动 + Playwright + Edge）
+├─ build-logs/                构建日志（gitignored）
 └─ dist/                      构建产物
 ```
 

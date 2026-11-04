@@ -29,6 +29,7 @@ export default function Controller() {
     setProgress("正在等待主控确认…");
     try {
       await api.mainControl(m, op, data);
+      if (op === 6) app.clearAlignments();
       app.toast("ok", op === 6 ? "主控已执行全部逻辑供电关闭" : `M${m} 命令已完成`);
     } catch (e) {
       app.toast("error", String(e));

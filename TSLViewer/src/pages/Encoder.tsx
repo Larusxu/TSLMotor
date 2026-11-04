@@ -1,6 +1,7 @@
+import Gauge from "../components/EncoderGauge";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api } from "../lib/api";
+import { api, HAS_TAURI } from "../lib/api";
 import { useApp } from "../lib/app-store";
 import { ENCODER_PRESETS, PHI_E_OFFSETS, STORAGE_PRESETS, TESLA_PROFILE } from "../lib/presets";
 import {
@@ -20,51 +21,13 @@ import {
 import { decodeMt6701, hex, mgText, spiHalfPeriod, spiHzFromHalf, ssiFrameSeconds } from "../lib/units";
 import type { EncoderCfgPayload } from "../lib/types";
 import { AlignmentPanels } from "./Align";
-
-function Gauge({ angle, label, sub }: { angle: number; label: string; sub?: string }) {
-  const r = 46;
-  const c = 2 * Math.PI * r;
-  const frac = ((angle % 360) + 360) % 360 / 360;
-  return (
-    <div className="gauge-wrap">
-      <svg width="128" height="128" viewBox="0 0 128 128">
-        <defs>
-          <linearGradient id="gg" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#2ee6e6" />
-            <stop offset="100%" stopColor="#6ea8fe" />
-          </linearGradient>
-        </defs>
-        <circle cx="64" cy="64" r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="6" />
-        <circle
-          cx="64"
-          cy="64"
-          r={r}
-          fill="none"
-          stroke="url(#gg)"
-          strokeWidth="6"
-          strokeLinecap="round"
-          strokeDasharray={`${c * frac} ${c}`}
-          transform="rotate(-90 64 64)"
-          style={{ filter: "drop-shadow(0 0 6px rgba(46,230,230,.5))", transition: "stroke-dasharray 160ms linear" }}
-        />
-        <g transform={`rotate(${angle} 64 64)`}>
-          <line x1="64" y1="64" x2="64" y2="26" stroke="#f5b544" strokeWidth="2" strokeLinecap="round" />
-          <circle cx="64" cy="26" r="3" fill="#f5b544" />
-        </g>
-        <circle cx="64" cy="64" r="3.4" fill="#2ee3e3" />
-        <text x="64" y="104" textAnchor="middle" fontSize="15" fontFamily="Cascadia Code, Consolas, monospace" fill="#e8eef7">
-          {angle.toFixed(1)}°
-        </text>
-        <text x="64" y="118" textAnchor="middle" fontSize="8.5" fill="#6d7b8e" letterSpacing="1.6">
-          {label}
-        </text>
-      </svg>
-      {sub && <div className="tiny muted">{sub}</div>}
-    </div>
-  );
-}
+import MainboardEncoder from "./MainboardEncoder";
 
 export default function EncoderPage() {
+  const app = useApp();
+  return app.mode !== "direct" ? <MainboardEncoder key={app.motor}/> : <DirectEncoderPage/>;
+}
+function DirectEncoderPage() {
   const app = useApp();
   const preset0 = ENCODER_PRESETS[0];
   const [presetId, setPresetId] = useState(preset0.id);
@@ -86,14 +49,23 @@ export default function EncoderPage() {
   const [pwmCount, setPwmCount] = useState(app.cal.pwmMaxCount);
   const [csa, setCsa] = useState(app.cal.csaGain);
   const [writeVel, setWriteVel] = useState(false);
-  const [velFrq, setVelFrq] = useState(0x000da71e);
+  const [velFrq, setVelFrq] = useState(app.motor === 9 ? 0x0002bb12 : 0x000da71e);
   const [velPer, setVelPer] = useState(0xfff00001);
   const [confirmWrite, setConfirmWrite] = useState(false);
   /** 偏置来源：__calib = 初次标定（本步不写 0x242）；"" = 手动；TMC_xx = 预设偏移。 */
   const [offsetSrc, setOffsetSrc] = useState<string>("__calib");
   const firstCalib = offsetSrc === "__calib";
+  const alignedOffset = app.alignment?.written ? app.alignment.offset : null;
   const [live, setLive] = useState<{ raw: number; conv: number; phiE: number; frame?: ReturnType<typeof decodeMt6701> } | null>(null);
   const [snapshot, setSnapshot] = useState<Record<number, number>>({});
+
+  // A successful automatic alignment write supersedes the initial-setup skip.
+  useEffect(() => {
+    if (app.alignment?.written) {
+      setOffset(app.alignment.offset);
+      setOffsetSrc("");
+    }
+  }, [app.motor, app.alignment?.written, app.alignment?.offset]);
 
   /** 掩码由帧长度唯一决定，不再手工填：只保留本帧读到的位。 */
   const mask = frameBits > 14 ? 0x00ff_ffff : 0x0000_3fff;
@@ -121,7 +93,7 @@ export default function EncoderPage() {
   }, []);
 
   const readLive = useCallback(async () => {
-    if (!app.connected) return;
+    if (!app.connected || !HAS_TAURI) return;
     try {
       const items = await api.readMany([0x24d, 0x247, 0x251, 0x240, 0x250, 0x242, 0x0c3, 0x103, 0x244, 0x245]);
       const map: Record<number, number> = {};
@@ -196,12 +168,13 @@ export default function EncoderPage() {
     [0x240, "CONF_CH_A", 0x07000000 | cprInv],
     [0x250, "OUTPUT_CONF", 0x00400000 | poles],
     [0x242, "PHI_E_OFFSET", firstCalib ? null : offset & 0xffff],
-    [0x0c3, "CSA_GAIN", csa],
+    [0x0c3, "CSA_GAIN (lo2)", csa],
     [0x103, "PWM_PERIOD (lo16)", pwmCount],
   ];
 
   return (
     <div className="grid" style={{ gap: 14 }}>
+      {!HAS_TAURI && <Notice tone="warn">当前为网页预览，未连接真实串口后端；不会写入编码器，也不显示模拟寄存器作为实板回读。请在桌面通信后端中执行硬件配置。</Notice>}
       <div className="grid flow-2-1">
         <div className="col-stack">
         <Card
@@ -236,7 +209,7 @@ export default function EncoderPage() {
               </Field>
               <Field label="电角度偏置" hint="0x242">
                 <NumField
-                  value={firstCalib ? "" : offset}
+                  value={firstCalib ? alignedOffset ?? "" : offset}
                   onChange={setOffset}
                   disabled={firstCalib}
                   placeholder="待对齐"
@@ -316,10 +289,14 @@ export default function EncoderPage() {
               <Check checked={writeVel} onChange={setWriteVel}>
                 同时写入测速配置
               </Check>
+              {app.motor === 9 && <Button size="sm" variant="ghost" disabled={app.jobRunning} onClick={() => {
+                setVelFrq(0x0002bb12); setVelPer(0xfff00001); setWriteVel(true);
+              }}>载入 M9 实测测速配置</Button>}
               <Check checked={firstCalib} onChange={(v) => setOffsetSrc(v ? "__calib" : "")}>
                 电角度偏置待标定（本次不写 0x242）
               </Check>
             </div>
+            <div className="tiny muted">测速配置用于芯片的速度反馈与速度环更新，不是设置电机转速。不勾选会保留当前 0x244/0x245；首次配置或复位后，请按该电机已验证的参数显式写入。</div>
             {writeVel && (
               <div className="row" style={{ gap: 10 }}>
                 <Field label="0x244 VELOCITY_FRQ_CONF" style={{ flex: 1 }}>
@@ -339,12 +316,12 @@ export default function EncoderPage() {
               <Button
                 variant="primary"
                 icon={<Icon.Save width={14} height={14} />}
-                disabled={!app.connected || !app.armed || !confirmWrite || app.jobRunning}
+                disabled={!HAS_TAURI || !app.connected || !app.armed || !confirmWrite || app.jobRunning}
                 onClick={() => void app.runJob("encoder", payload)}
               >
                 写入编码器配置
               </Button>
-              <Button variant="ghost" disabled={!app.connected} onClick={() => void readLive()}>
+              <Button variant="ghost" disabled={!HAS_TAURI || !app.connected || app.jobRunning} onClick={() => void readLive()}>
                 刷新回读
               </Button>
               {!app.armed && <span className="tiny muted">需解锁 ARM</span>}
@@ -374,6 +351,7 @@ export default function EncoderPage() {
 
         <div className="col-stack">
           <Card title="写入校验" sub="EXPECTED vs ACTUAL">
+            <div className="tiny muted">当前输入与最近回读对照；尚未写入或读取失败不等于写入失败。初次标定模式会跳过 0x242。</div>
             <table className="table">
               <thead>
                 <tr>
@@ -385,7 +363,8 @@ export default function EncoderPage() {
               </thead>
               <tbody>
                 {checks.map(([addr, name, want]) => {
-                  const got = snapshot[addr];
+                  const raw = snapshot[addr];
+                  const got = raw === undefined ? undefined : addr === 0x0c3 ? raw & 3 : raw;
                   const pending = want === null;
                   const ok = got !== undefined && want !== null && (addr === 0x103 ? (got & 0xffff) === want : got === want);
                   return (
@@ -397,7 +376,9 @@ export default function EncoderPage() {
                       <td className="mono">{got === undefined ? "—" : hex(got)}</td>
                       <td>
                         {pending ? (
-                          <Badge tone="neutral">待对齐</Badge>
+                          <Badge tone="neutral">本次未写</Badge>
+                        ) : got === undefined ? (
+                          <Badge tone="neutral">未读回</Badge>
                         ) : ok ? (
                           <Badge tone="ok">OK</Badge>
                         ) : (
@@ -417,7 +398,7 @@ export default function EncoderPage() {
               <Button
                 size="sm"
                 variant={liveOn ? "danger" : "primary"}
-                disabled={!app.connected}
+                disabled={!HAS_TAURI || !app.connected || app.jobRunning}
                 title={liveOn ? "当前：开启（正在连续回读）· 点击关闭" : "当前：关闭 · 点击开启连续回读"}
                 onClick={() => setLiveOn((v) => !v)}
               >

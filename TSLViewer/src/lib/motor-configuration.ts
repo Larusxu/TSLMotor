@@ -1,0 +1,39 @@
+import { useSyncExternalStore } from "react";
+import { TESLA_PROFILE as p } from "./presets";
+import { MA_PER_COUNT } from "./units";
+import type { PidCfgPayload } from "./types";
+import type { ControlConfig } from "./motor-control";
+
+/** Edits only. Verified register/profile ownership is in the Rust ParameterBank.
+ * Per-motor drafts survive page navigation; never restored/enabled on a chip automatically. */
+interface Draft { pid: PidCfgPayload; task: ControlConfig }
+const drafts = new Map<number, Draft>();
+const listeners = new Set<() => void>();
+function get(motor: number): Draft {
+  if (!drafts.has(motor)) drafts.set(motor, {
+    pid: { flux_p: p.pid.curP, flux_i: p.pid.curI, torque_p: p.pid.curP, torque_i: p.pid.curI,
+      vel_p: p.pid.velP, vel_i: p.pid.velI, pos_p: p.pid.posP, pos_i: p.pid.posI,
+      cur_norm_p: 1, cur_norm_i: 1, vel_norm_p: 1, vel_norm_i: 1, pos_norm_p: 1, pos_norm_i: 1,
+      vel_shift: 8, pos_sampling: 0, overwrite_target: false, keep_pos_target: false,
+      torque_limit_ma: p.limits.torqueMa, flux_limit_ma: p.limits.fluxMa,
+      vel_limit_rpm: p.limits.velRpm, velocity_mode_limit_rpm:28730, uq_ud_limit: p.limits.uqUd,
+      ma_per_count: MA_PER_COUNT, counts_per_rpm: 1099511627776 / 3600000000 },
+    task: { motor, poles: 1, min_deg: 0, max_deg: 54600, max_rpm: 2000, limit_ma: 500, trip_ma: 600,
+      trajectory: true, duration_ms: 2000, accel_deg_s2: 6000, decel_deg_s2: 6000,
+      mode: "position_ramp", planning: "limits", over_ms: 180, sample_ms: 60, comm_timeout_ms: 1000, fault_action: "disable" },
+  });
+  return drafts.get(motor)!;
+}
+export function useMotorConfiguration(motor: number) {
+  const draft = useSyncExternalStore(cb => { listeners.add(cb); return () => { listeners.delete(cb); }; }, () => get(motor));
+  const update = <K extends keyof Draft>(key: K, value: Draft[K] | ((old: Draft[K]) => Draft[K])) => {
+    const old = get(motor);
+    const next={ ...old, [key]: typeof value === "function" ? (value as (old: Draft[K]) => Draft[K])(old[key]) : value };
+    // Old direct-mode API aliases refer to the same current/speed ownership.
+    if(key==="pid")next.task={...next.task,limit_ma:next.pid.torque_limit_ma};
+    drafts.set(motor,next);
+    listeners.forEach(cb => cb());
+  };
+  return { ...draft, setPid: (value: Draft["pid"] | ((p: Draft["pid"]) => Draft["pid"])) => update("pid", value),
+    setTask: (value: Draft["task"] | ((p: Draft["task"]) => Draft["task"])) => update("task", value) };
+}

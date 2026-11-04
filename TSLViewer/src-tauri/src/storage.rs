@@ -9,7 +9,7 @@
 //! |---------------|--------------|------------------------------------------------|
 //! | `I2C_INIT_OD` | `0xAA02yyyy` | `RESPONSE_0` echoes, `fI2C=fSYS/4/(yyyy+1)`     |
 //! | `I2C_WRITE`   | `0xEyyyzzzz` | `RESPONSE_0` echoes                             |
-//! | `I2C_READ`    | `0xDyyy0000` | `RESPONSE_1[7:0]` = byte                        |
+//! | `I2C_READ`    | `0xDyyy0000` | `RESPONSE_1[15:0]`; byte mapping UNVERIFIED      |
 //! | `I2C_EEPROM`  | `0xAA030000` | whole EEPROM copied into the I/O controller RAM  |
 //! | `RAM_READ`    | `0xCyyy0000` | `RESPONSE_1[15:0]`                              |
 //!
@@ -36,8 +36,18 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::link::{Link, Result};
+use crate::link::{Link, LinkError, Result};
 use crate::regs;
+use crate::io_rom::{self, LinkPort};
+
+/// Two supplied datasheets do not define the ROM-to-M24C02 byte contract.
+/// Keep legacy codecs for explicit migration, but do not run byte operations
+/// or take SSI ownership based on that unverified assumption. No UI override.
+pub fn require_byte_contract() -> Result<()> {
+    Err(LinkError::ValueError(
+        "M24C02 字节访问后端尚未验证：TMC ROM 定义为12位地址/16位数据，器件寻址、字节序和SSI恢复仍待核实；本次未访问或修改EEPROM".into(),
+    ))
+}
 
 pub const EEPROM_LEN: usize = 256;
 pub const BLOCK_LEN: usize = 112;
@@ -226,25 +236,18 @@ fn crc8(data: &[u8]) -> u8 {
 
 /// `I2C_INIT_OD` with the closest reachable clock: `fI2C = 60 MHz / 4 / (yyyy+1)`.
 pub fn init_i2c(link: &Link, hz: u32) -> Result<u32> {
+    require_byte_contract()?;
     let hz = hz.clamp(10_000, 100_000);
     let yyyy = (60_000_000u32 / 4 / hz).saturating_sub(1).min(0xFFFF);
     let cmd = 0xAA02_0000 | yyyy;
-    link.write_reg(regs::IO_COMMAND, cmd)?;
-    sleep(Duration::from_millis(5));
-    let echo = link.read_reg_retry(regs::IO_RESPONSE_0, 3)?;
-    if echo != cmd {
-        link.log(
-            "warn",
-            "storage",
-            format!("I2C_INIT_OD 回显 0x{echo:08X}，期望 0x{cmd:08X}"),
-        );
-    }
+    io_rom::execute(&mut LinkPort::new(link), cmd, false, 50)?;
     Ok(60_000_000 / 4 / (yyyy + 1))
 }
 
 /// Point `HALL_U`/`HALL_V` at the I/O controller as SDA/SCL. Costs the Hall
 /// inputs — the only pins the TMC6460 can drive I²C on.
 pub fn enable_i2c_pins(link: &Link) -> Result<(u32, u32)> {
+    require_byte_contract()?;
     let cur = link.read_reg_retry(regs::CHIP_IO_MATRIX, 3)?;
     // PIN_HALL_U[8:6] = 3 (SDA), PIN_HALL_V[11:9] = 3 (SCL)
     let mut next = cur & !(0b111 << 6) & !(0b111 << 9);
@@ -262,28 +265,23 @@ pub fn enable_i2c_pins(link: &Link) -> Result<(u32, u32)> {
 }
 
 fn write_byte(link: &Link, addr: usize, data: u8) -> Result<()> {
-    let cmd = 0xE000_0000 | ((addr as u32 & 0x0FFF) << 16) | data as u32;
-    link.write_reg(regs::IO_COMMAND, cmd)?;
+    require_byte_contract()?;
+    let cmd = io_rom::i2c_command(addr, Some(u16::from(data)))?;
+    io_rom::execute(&mut LinkPort::new(link), cmd, false, 50)?;
     sleep(Duration::from_millis(WRITE_DELAY_MS));
-    let echo = link.read_reg_retry(regs::IO_RESPONSE_0, 3)?;
-    if echo != cmd {
-        link.log(
-            "warn",
-            "storage",
-            format!("I2C_WRITE 回显 0x{echo:08X}，期望 0x{cmd:08X}"),
-        );
-    }
     Ok(())
 }
 
 fn read_byte(link: &Link, addr: usize) -> Result<u8> {
-    let cmd = 0xD000_0000 | ((addr as u32 & 0x0FFF) << 16);
-    link.write_reg(regs::IO_COMMAND, cmd)?;
-    let v = link.read_reg_retry(regs::IO_RESPONSE_1, 3)?;
-    Ok((v & 0xFF) as u8)
+    require_byte_contract()?;
+    let cmd = io_rom::i2c_command(addr, None)?;
+    let v = io_rom::execute(&mut LinkPort::new(link), cmd, true, 50)?.ok_or(LinkError::Corrupt)?;
+    u8::try_from(v).map_err(|_| LinkError::ValueError("ROM 返回值不是单字节；禁止静默截断".into()))
 }
 
 pub fn write_bytes(link: &Link, addr: usize, data: &[u8]) -> Result<()> {
+    require_byte_contract()?;
+    if addr > EEPROM_LEN || data.len() > EEPROM_LEN-addr { return Err(LinkError::Corrupt); }
     for (i, b) in data.iter().enumerate() {
         write_byte(link, addr + i, *b)?;
     }
@@ -291,6 +289,8 @@ pub fn write_bytes(link: &Link, addr: usize, data: &[u8]) -> Result<()> {
 }
 
 pub fn read_bytes(link: &Link, addr: usize, len: usize) -> Result<Vec<u8>> {
+    require_byte_contract()?;
+    if addr > EEPROM_LEN || len > EEPROM_LEN-addr { return Err(LinkError::Corrupt); }
     let mut out = Vec::with_capacity(len);
     for i in 0..len {
         out.push(read_byte(link, addr + i)?);
@@ -319,6 +319,7 @@ pub struct Probe {
 pub fn probe(link: &Link) -> Result<Probe> {
     let (before, after) = enable_i2c_pins(link)?;
     let hz = init_i2c(link, 100_000)?;
+    reject_new_layout(link)?;
     let saved = read_byte(link, SCRATCH)?;
     let pattern = [0xA5u8, 0x5A];
     let mut read_back = [0u8; 2];
@@ -373,6 +374,7 @@ pub fn save(link: &Link, params: &StoreParams) -> Result<SaveInfo> {
     let started = std::time::Instant::now();
     enable_i2c_pins(link)?;
     init_i2c(link, 100_000)?;
+    reject_new_layout(link)?;
     // The pins are remapped now; never leave the bridge driving.
     link.write_reg(
         regs::MCC_MOTOR_MOTION,
@@ -471,6 +473,7 @@ pub fn load(link: &Link) -> Result<LoadInfo> {
 pub fn erase(link: &Link) -> Result<usize> {
     enable_i2c_pins(link)?;
     init_i2c(link, 100_000)?;
+    reject_new_layout(link)?;
     let mut n = 0;
     for base in [BLOCK_A, BLOCK_B] {
         for i in 0..4 {
@@ -482,9 +485,34 @@ pub fn erase(link: &Link) -> Result<usize> {
     Ok(n)
 }
 
+/// The old B block and scratch overlap MTR1 slot B. Refuse legacy mutations
+/// even when the new record has an invalid commit marker (interrupted save).
+fn reject_new_layout(link: &Link) -> Result<()> {
+    for base in [0usize, 128usize] {
+        let magic = read_bytes(link, base, 4)?;
+        if magic == b"MTR1" {
+            return Err(LinkError::ValueError(
+                "检测到主控 MTR1 双槽档案；旧版保存、清除和0xFE写测试已禁止，请使用主控档案接口".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unverified_backend_rejects_before_transport_or_pin_changes() {
+        let link = Link::new();
+        for error in [probe(&link).err(), dump(&link).err(),
+                      save(&link, &StoreParams::default()).err(), load(&link).err(),
+                      erase(&link).err(), read_bytes(&link,0,256).err(),
+                      write_bytes(&link,0,&[1,2]).err()] {
+            assert!(matches!(error, Some(LinkError::ValueError(ref text)) if text.contains("字节访问后端尚未验证")));
+        }
+    }
 
     #[test]
     fn block_round_trips() {

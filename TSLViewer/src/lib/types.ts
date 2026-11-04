@@ -70,6 +70,7 @@ export interface PidSnapshot {
   tf_limits: number;
   vel_limit: number;
   uq_ud_limit: number;
+  integrators?: number[];
 }
 
 export interface CalibGroup {
@@ -180,6 +181,7 @@ export interface PidCfgPayload {
   torque_limit_ma: number;
   flux_limit_ma: number;
   vel_limit_rpm: number;
+    velocity_mode_limit_rpm?: number;
   uq_ud_limit: number;
   ma_per_count: number;
   counts_per_rpm: number;
@@ -324,6 +326,32 @@ export interface HomingParams {
   dir: -1 | 1;
   /** 每拍推进量，单位 0.01°（电机端）。默认 1500 = 15° */
   step_unit: number;
+  /** 连续轨迹模式；需配套2026-11-01及之后的主控固件。缺省保留步进模式。 */
+  timed_seek?: boolean;
+  dual_limit?: boolean;
+}
+
+/**
+ * 找零工艺参数。**存在主控里**（内存，掉电不保存），字段与 `op 15/16`
+ * 的 16 字节载荷一一对应（全部 u16）。
+ */
+export interface HomingConfig {
+  /** 判定系数 k ×1000（0.4 → 400）；阈值 = k × 额定电流 */
+  k_x1000: number;
+  /** 额定电流刻度，mA */
+  rated_ma: number;
+  /** 连续超阈确认时间，ms */
+  confirm_ms: number;
+  /** 找零期间电流上限，mA；必须大于阈值 */
+  limit_ma: number;
+  /** 推进速度上限，RPM */
+  max_rpm: number;
+  /** 到位后反向退开量，电机端角度 */
+  retreat_deg: number;
+  /** 退开后稳定等待，ms */
+  settle_ms: number;
+  /** 找零超时，s */
+  timeout_s: number;
 }
 
 /** 主控上报的找零状态。上位机只读，不推算、不覆盖。 */
@@ -340,6 +368,13 @@ export interface HomingState {
   error: number;
   /** 主控给出的说明（可为空） */
   message: string;
+  dual_supported?: boolean;
+  limit_phase?: number;
+  negative_valid?: boolean;
+  positive_valid?: boolean;
+  negative_contact?: number;
+  positive_contact?: number;
+  travel_counts?: number;
 }
 
 export interface EepromLoad {

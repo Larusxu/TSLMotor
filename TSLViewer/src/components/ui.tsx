@@ -228,6 +228,9 @@ export function NumField({
   disabled,
   placeholder,
   width,
+  label,
+  readOnly,
+  clampOnCommit = true,
 }: {
   value: number | string;
   onChange: (v: number) => void;
@@ -238,6 +241,11 @@ export function NumField({
   disabled?: boolean;
   placeholder?: string;
   width?: number | string;
+  /** 可访问名称（`Field` 的 label 与输入框没有 association，需要时单独给）。 */
+  label?: string;
+  readOnly?: boolean;
+  /** Keep configuration edits visible; validation can reject instead of silently clamping. */
+  clampOnCommit?: boolean;
 }) {
   const [text, setText] = useState(String(value));
   const [focus, setFocus] = useState(false);
@@ -246,11 +254,12 @@ export function NumField({
   }, [value, focus]);
 
   const commit = (raw: string) => {
+    if (readOnly) return;
     const n = Number(raw);
     if (Number.isFinite(n)) {
       let v = n;
-      if (min !== undefined) v = Math.max(min, v);
-      if (max !== undefined) v = Math.min(max, v);
+      if (clampOnCommit && min !== undefined) v = Math.max(min, v);
+      if (clampOnCommit && max !== undefined) v = Math.min(max, v);
       onChange(v);
       setText(String(v));
     } else {
@@ -266,6 +275,8 @@ export function NumField({
         step={step}
         disabled={disabled}
         placeholder={placeholder}
+        aria-label={label}
+        readOnly={readOnly}
         onFocus={() => setFocus(true)}
         onBlur={() => {
           setFocus(false);
@@ -770,9 +781,9 @@ export function Toasts({ items, onDismiss }: { items: ToastItem[]; onDismiss: (i
     return () => timers.forEach(clearTimeout);
   }, [items, onDismiss]);
   return (
-    <div className="toasts">
+    <div className="toasts" aria-live="polite" aria-atomic="false">
       {items.map((t) => (
-        <div key={t.id} className={`toast ${t.tone}`} onClick={() => onDismiss(t.id)}>
+          <div key={t.id} className={`toast ${t.tone}`} role={t.tone==="error"?"alert":"status"} onClick={() => onDismiss(t.id)}>
           <span className="bar" />
           <span>{t.text}</span>
         </div>

@@ -30,6 +30,7 @@ import type {
   EepromProbe,
   EepromSave,
   EepromLoad,
+  HomingConfig,
   HomingParams,
   HomingState,
 } from "./types";
@@ -97,9 +98,12 @@ const real = {
   eepromSave: (params: StoreParams) => invoke<EepromSave>("eeprom_save", { params }),
   eepromLoad: () => invoke<EepromLoad>("eeprom_load"),
   eepromErase: () => invoke<number>("eeprom_erase"),
-  homingStart: (params: HomingParams) => invoke<void>("homing_start", { params }),
-  homingState: () => invoke<HomingState>("homing_state"),
-  homingCancel: () => invoke<void>("homing_cancel"),
+  homingStart: (params: HomingParams, motor: number) => invoke<void>("homing_start", { params, motor }),
+  homingState: (motor: number) => invoke<HomingState>("homing_state", { motor }),
+  homingCancel: (motor: number) => invoke<void>("homing_cancel", { motor }),
+  homingWriteConfig: (cfg: HomingConfig, motor: number) =>
+    invoke<void>("homing_write_config", { cfg, motor }),
+  homingReadConfig: (motor: number) => invoke<HomingConfig>("homing_read_config", { motor }),
 };
 
 // ---------------------------------------------------------------------------
@@ -200,28 +204,21 @@ const mock = (() => {
   void wrap;
 
   // ---- 机械找零：模拟「主控固件」的状态机 --------------------------------
-  // 上位机只做两件事：下发方向与步进（homingStart）、轮询状态（homingState）。
-  // 门控、推进、电流判据、超时、零点写入、退开全部在这里（= 固件侧）完成，
-  // 与 doc/TODO/TODO-01-机械找零.md 的约定一致。
-  const HOMING_FW = {
-    /** 额定电流刻度（本工程取力矩限幅 800 mA） */
-    ratedMa: 800,
-    /** 判定系数 k：阈值 = k × 额定 */
-    k: 0.4,
-    /** 连续超阈确认时间 */
-    confirmMs: 50,
-    /** 找零期间的电流上限，必须 > 阈值 */
-    limitMa: 600,
-    /** 推进速度上限，仅用于仿真时长 */
-    maxRpm: 2000,
-    /** 找零超时 */
-    timeoutMs: 60_000,
-    /** 退开量（电机端） */
-    retreatDeg: 360,
-    /** 退开后的稳定等待 */
-    settleMs: 2000,
+  // 上位机只做三件事：写参数（homingWriteConfig）、下发方向与步进（homingStart）、
+  // 轮询状态（homingState）。门控、推进、电流判据、超时、零点写入、退开全部在
+  // 这里（= 固件侧）完成，与 doc/TODO/TODO-01-机械找零.md 的约定一致。
+  // 参数存在「主控」里：op 15 写入，op 16 回读；状态机读的就是这份。
+  let homingCfg: HomingConfig = {
+    k_x1000: 400,
+    rated_ma: 800,
+    confirm_ms: 50,
+    limit_ma: 600,
+    max_rpm: 2000,
+    retreat_deg: 360,
+    settle_ms: 2000,
+    timeout_s: 60,
   };
-  const HOMING_THRESHOLD_MA = HOMING_FW.ratedMa * HOMING_FW.k;
+  const homingThreshold = () => (homingCfg.k_x1000 * homingCfg.rated_ma) / 1000;
   type HomingPhase = "idle" | "approach" | "contact" | "retreat" | "settle";
   const homing = {
     stage: 0,
@@ -264,12 +261,12 @@ const mock = (() => {
   const homingTick = () => {
     const dt = 40;
     homing.elapsed += dt;
-    if (homing.elapsed > HOMING_FW.timeoutMs) {
+    if (homing.elapsed > homingCfg.timeout_s * 1000) {
       homingFail(1, "找零超时");
       return;
     }
     // 电流判据：连续超阈才算接触，任何一拍掉回阈值以下立即清零
-    const above = Math.abs(homing.iq) >= HOMING_THRESHOLD_MA;
+    const above = Math.abs(homing.iq) >= homingThreshold();
     homing.contactMs = above ? homing.contactMs + dt : 0;
 
     switch (homing.phase) {
@@ -287,22 +284,22 @@ const mock = (() => {
       }
       case "contact": {
         // 顶住挡块：给定继续跑，电流被限幅钳住
-        homing.iq = homing.dir * (HOMING_FW.limitMa + (Math.random() - 0.5) * 30);
-        if (homing.contactMs >= HOMING_FW.confirmMs) {
+        homing.iq = homing.dir * (homingCfg.limit_ma + (Math.random() - 0.5) * 30);
+        if (homing.contactMs >= homingCfg.confirm_ms) {
           // 记录实测位置作为零点，并立即退开（避免长期顶紧）
           homing.zeroValid = false;
           homing.phase = "retreat";
-          homing.retreatLeft = HOMING_FW.retreatDeg;
+          homing.retreatLeft = homingCfg.retreat_deg;
           log("info", "homing", `检测到接触（${homing.contactMs} ms 连续超阈），零点已记录`);
         }
         break;
       }
       case "retreat": {
         homing.iq = -homing.dir * 120;
-        homing.retreatLeft -= (HOMING_FW.maxRpm * 6 * dt) / 1000;
+        homing.retreatLeft -= (homingCfg.max_rpm * 6 * dt) / 1000;
         if (homing.retreatLeft <= 0) {
           homing.phase = "settle";
-          homing.settleLeft = HOMING_FW.settleMs;
+          homing.settleLeft = homingCfg.settle_ms;
         }
         break;
       }
@@ -866,6 +863,37 @@ const mock = (() => {
       await delay(40);
       if (homing.stage !== 1) return;
       homingFail(3, "已取消");
+    },
+    async homingWriteConfig(cfg: HomingConfig, _motor?: number): Promise<void> {
+      await delay(60);
+      if (!connected) throw new Error("串口未连接");
+      if (homing.stage === 1) throw new Error("主控拒绝写入找零参数：参数越界或找零进行中");
+      // 与固件同款校验：越界或上限不大于阈值一律拒绝
+      const fields: [string, number, number, number][] = [
+        ["判定系数 k", cfg.k_x1000, 100, 2000],
+        ["额定电流", cfg.rated_ma, 100, 3000],
+        ["连续确认", cfg.confirm_ms, 10, 1000],
+        ["找零电流上限", cfg.limit_ma, 100, 2000],
+        ["推进速度上限", cfg.max_rpm, 100, 6000],
+        ["退开量", cfg.retreat_deg, 0, 1080],
+        ["退开稳定等待", cfg.settle_ms, 0, 10000],
+        ["找零超时", cfg.timeout_s, 5, 300],
+      ];
+      for (const [name, v, lo, hi] of fields) {
+        if (!Number.isFinite(v) || v < lo || v > hi) {
+          throw new Error(`主控拒绝写入：${name} 超出 ${lo}…${hi}（${v}）`);
+        }
+      }
+      if (cfg.limit_ma <= (cfg.k_x1000 * cfg.rated_ma) / 1000) {
+        throw new Error("主控拒绝写入：找零电流上限必须大于判定阈值");
+      }
+      homingCfg = { ...cfg };
+      log("ok", "homing", `找零参数已写入主控（阈值 ${homingThreshold().toFixed(0)} mA）`);
+    },
+    async homingReadConfig(_motor?: number): Promise<HomingConfig> {
+      await delay(40);
+      if (!connected) throw new Error("串口未连接");
+      return { ...homingCfg };
     },
     async sequence(cfg: SeqCfgPayload): Promise<SeqResult> {
       const job = `sequence:${Date.now()}`;

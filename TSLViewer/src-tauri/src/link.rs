@@ -98,6 +98,7 @@ struct Port {
 }
 
 pub struct Link {
+    pub parameters: Mutex<crate::motor_parameters::ParameterBank>,
     port: Mutex<Option<Port>>,
     paused: AtomicBool,
     running: AtomicBool,
@@ -126,6 +127,7 @@ struct RtmiState {
 impl Link {
     pub fn new() -> Self {
         Self {
+            parameters: Mutex::new(crate::motor_parameters::ParameterBank::default()),
             port: Mutex::new(None),
             paused: AtomicBool::new(false),
             running: AtomicBool::new(false),
@@ -185,6 +187,9 @@ impl Link {
 
     pub fn is_connected(&self) -> bool {
         self.port.lock().is_some()
+    }
+    pub fn is_gateway(&self) -> bool {
+        self.port.lock().as_ref().map(|p|p.sp.gateway()).unwrap_or(false)
     }
 
     pub fn rtmi_running(&self) -> bool {
@@ -246,6 +251,7 @@ impl Link {
     }
 
     pub fn gateway_control(&self, motor:u8, op:u8, data:&[u8])->Result<Vec<u8>> {
+        if op==6 || op==11 || (op==5 && data==[0]) {self.parameters.lock().invalidate();}
         let mut guard = self.port.try_lock_for(Duration::from_millis(100))
             .ok_or_else(|| LinkError::Io("通信忙，请等待当前事务结束后重试".into()))?;
         let p = guard.as_mut().ok_or(LinkError::NotConnected)?;
@@ -328,10 +334,12 @@ impl Link {
     }
 
     pub fn close(&self) {
+        self.parameters.lock().invalidate();
         let _ = self.stop_rtmi();
         let mut guard = self.port.lock();
-        if let Some(mut p) = guard.take() {
-            if p.sp.gateway(){let _=p.sp.call(0,9,&[]);}
+        if let Some(p) = guard.take() {
+            // Gateway normal disconnect relies on the MCU session close/lease
+            // stop. Logic power is retained; explicit E-stop still cuts power.
             self.log("info", "link", format!("关闭 {}", p.name));
         }
     }
@@ -343,6 +351,8 @@ impl Link {
             }
         }
     }
+
+    pub fn focused_motor(&self) -> u8 {self.port.lock().as_ref().map(|p|p.sp.motor).unwrap_or(1)}
 
     pub fn stats(&self) -> LinkStats {
         let frames = self.counters.rtmi_frames.load(Ordering::Relaxed);

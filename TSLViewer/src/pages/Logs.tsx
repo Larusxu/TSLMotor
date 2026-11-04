@@ -86,7 +86,7 @@ export default function LogsPage() {
         {rows.length === 0 && <div className="empty">暂无日志</div>}
         {rows.map((l, i) => (
           <div key={`${l.ts}-${i}`} className={`log-row ${l.level}`}>
-            <span className="t">{new Date(l.ts).toLocaleTimeString("zh-CN", { hour12: false })}</span>
+            <span className="t">{new Date(l.ts).toLocaleTimeString("zh-CN", { hour12: false, fractionalSecondDigits: 3 })}</span>
             <span className="lv">{l.level}</span>
             <span className="msg">
               <span className="muted">[{l.source}]</span> {l.message}
