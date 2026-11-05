@@ -16,6 +16,7 @@ pub struct Request {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Command {
+    IdentState { cursor:u32 }, IdentStart { loop_id:u8, amplitude:u32, duration_ms:u32, travel_counts:u32, #[serde(default)] sampling:Option<u8>, #[serde(default)] excitation_sampling:Option<u8> }, IdentAbort,
     GetState, PositionState, EncoderState, RtmiState { cursor:u32 }, RtmiConfig { enabled:bool, sampling:u8, addresses:[u16;7], #[serde(default="rtmi_decimation_default")] decimation:u8 }, Open, Pulse, Close,
     Permit { enabled: bool, lease_ms: u32 },
     DriveDisable, DriveEnable,
@@ -45,7 +46,8 @@ fn rtmi_decimation_default()->u8{1}
 impl Command {
     fn code(&self) -> u8 {
         match self {
-            Self::GetState|Self::PositionState|Self::EncoderState|Self::RtmiState{..}=>1, Self::Open=>2, Self::Pulse=>3, Self::Close=>4,
+            Self::IdentState{..}|Self::GetState|Self::PositionState|Self::EncoderState|Self::RtmiState{..}=>1,
+            Self::IdentStart{..}=>28, Self::IdentAbort=>29, Self::Open=>2, Self::Pulse=>3, Self::Close=>4,
             Self::Permit{..}=>5, Self::DriveDisable=>6, Self::DriveEnable=>7,
             Self::Limits{..}=>8, Self::Mode{..}=>9, Self::JogStart{..}=>10,
             Self::TaskSpeed{..}=>26,
@@ -71,6 +73,11 @@ pub fn encode(motor:u8,q:&Request)->Result<Vec<u8>,String>{
     let mut p=vec![2,op];add32(&mut p,q.request_id);p.extend(boot.to_le_bytes());
     add32(&mut p,q.session_id);add32(&mut p,q.task_id);
     match &q.command {
+        Command::IdentState{cursor}=>{if motor==0{return Err("Identification requires a motor".into());}p.push(4);add32(&mut p,*cursor);},
+        Command::IdentStart{loop_id,amplitude,duration_ms,travel_counts,sampling,excitation_sampling}=>{
+            if *loop_id>3||*amplitude==0||*amplitude>i32::MAX as u32||!(1000..=7000).contains(duration_ms)||*travel_counts==0||*travel_counts>655360{return Err("Invalid identification parameters".into());}
+            p.push(*loop_id);for v in [amplitude,duration_ms,travel_counts]{add32(&mut p,*v);}if let Some(e)=excitation_sampling{p.push(sampling.unwrap_or(7));p.push(*e);}else if let Some(v)=sampling{p.push(*v);}
+        },
         Command::PositionState=>{if motor==0{return Err("位置状态需要电机编号".into());}p.push(1);},
         Command::EncoderState=>{if motor==0{return Err("编码器状态需要电机编号".into());}p.push(2);},
         Command::RtmiState{cursor}=>{if motor==0{return Err("RTMI requires a motor".into());}p.push(3);add32(&mut p,*cursor);},
@@ -147,12 +154,14 @@ pub struct Response {
     pub homing_config:Option<[u16;8]>,
     pub encoder:Option<[u32;12]>,
     pub rtmi:Option<Vec<u8>>,
+    pub identification:Option<Vec<u8>>,
 }
 pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String>{
     let home_config=matches!(q.command,Command::HomingConfigRead|Command::HomingConfigWrite{..});
+    let ident_query=matches!(q.command,Command::IdentState{..});
     let rtmi_query=matches!(q.command,Command::RtmiState{..});
     let encoder_query=matches!(q.command,Command::EncoderState);
-    if motor>16 || (if rtmi_query {motor==0||p.len()<48||p.len()>120||(p.len()-48)%9!=0}else if encoder_query {motor==0||p.len()!=76}else if home_config {motor==0||p.len()!=44}else if motor==0 {p.len()!=40}else{p.len()!=96 && p.len()!=120 && p.len()!=128}) {return Err("语义状态长度错误".into());}
+    if motor>16 || (if ident_query {motor==0||p.len()<92||p.len()>124||(p.len()-92)%16!=0}else if rtmi_query {motor==0||p.len()<48||p.len()>120||(p.len()-48)%9!=0}else if encoder_query {motor==0||p.len()!=76}else if home_config {motor==0||p.len()!=44}else if motor==0 {p.len()!=40}else{p.len()!=96 && p.len()!=120 && p.len()!=128}) {return Err("语义状态长度错误".into());}
     if p[0]!=2||p[1]!=q.command.code()||u32_at(p,2)!=q.request_id||p[23]&!3!=0 {return Err("语义响应身份/标志不匹配".into());}
     let names=["OK","BUSY","NOT_AUTHORIZED","DRIVE_NOT_READY","ALIGN_INVALID","HOME_INVALID","OUT_OF_RANGE","STALE_SESSION","TIMEOUT","FAULT_LATCHED","CONFIG_MISMATCH","EEPROM_INVALID","UNSUPPORTED","IO_ERROR","BAD_REQUEST","TRAVEL_LIMIT"];
     let result=p[22];let result_name=*names.get(result as usize).ok_or("未知主控结果码")?;
@@ -161,15 +170,15 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String>{
     let b=&p[28..];
     if motor==0 {
         if b[4]!=16||b[5]>2||b[6]>16||b[7]>1||u32_at(b,0)&!3!=0{return Err("非法设备状态字段".into());}
-    } else if !home_config && !encoder_query && !rtmi_query {
+    } else if !home_config && !encoder_query && !rtmi_query && !ident_query {
         if p.len()>=120 && (b[88]>1 || b[89..92].iter().any(|x|*x!=0)) {return Err("非法归零坐标扩展".into());}
         if p.len()>=120 && b[88]!=0 && (b[48]==0||b[49]==0||b[50]==0||i64_at(b,76)<=0||u32_at(b,84)==0||i64_at(b,76)<=2*i64::from(u32_at(b,84))) {return Err("归零坐标约束错误".into());}
         for i in [44,45,47,48,49,50,52,53,54,55,66]{if b[i]>1{return Err("非法布尔状态字段".into());}}
         if b[46]>3||b[51]>5||b[64]>3||b[65]>3||b[67]>7{return Err("非法电机状态枚举".into());}
     }
-    if !rtmi_query && motor!=0 && p.len()==128 && (b[92]>4||b[93]&!7!=0) {return Err("非法到位状态扩展".into());}
+    if !ident_query && !rtmi_query && motor!=0 && p.len()==128 && (b[92]>4||b[93]&!7!=0) {return Err("非法到位状态扩展".into());}
     let device=if motor==0 {Some(DeviceSnapshot{capabilities:u32_at(b,0),motors:b[4],source:b[5],active_motor:b[6],stopping:b[7]!=0,request_floor:u32_at(b,8)})}else{None};
-    let snapshot=if motor!=0 && !home_config && !encoder_query && !rtmi_query {Some(MotorSnapshot{
+    let snapshot=if motor!=0 && !home_config && !encoder_query && !rtmi_query && !ident_query {Some(MotorSnapshot{
         sampled_at_ms:u32_at(b,0),fault:u32_at(b,4),last_error:u32_at(b,8),
         position:i64_at(b,12).to_string(),negative_contact:i64_at(b,20).to_string(),positive_contact:i64_at(b,28).to_string(),
         velocity_raw:u32_at(b,36) as i32,iq_raw:u32_at(b,40) as i32,connection:b[44]!=0,permit:b[45]!=0,
@@ -190,10 +199,15 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String>{
     let encoder=if encoder_query&&result==0{let mut v=[0;12];for i in 0..12{v[i]=u32_at(b,i*4);}if v[1]>1{return Err("编码器有效标志错误".into());}Some(v)}else{None};
     let rtmi=if rtmi_query&&result==0 {
         if b[16]>1||b[18]>127||b[19]>8||b.len()!=20+b[19] as usize*9{return Err("Invalid RTMI snapshot".into());}
-        for i in 0..b[19] as usize{if b[24+i*9]>6{return Err("Invalid RTMI channel".into());}}
+        // Reserved cursor reads eight diagnostic words, not live RTMI channels.
+        let diagnostic=matches!(q.command,Command::RtmiState{cursor:0xffff_fffe|0xffff_fffd});
+        for i in 0..b[19] as usize{if b[24+i*9]>if diagnostic{7}else{6}{return Err("Invalid RTMI channel".into());}}
         Some(b.to_vec())
     }else{None};
-    Ok(Response{rtmi,encoder,homing_config,protocol_version:2,operation:p[1],request_id:q.request_id,boot_id:boot.to_string(),session_id:u32_at(p,14),task_id:u32_at(p,18),timestamp_ms:u32_at(p,24),result,result_name,replayed:p[23]&1!=0,pending:p[23]&2!=0,device,motor:snapshot})
+    let identification=if ident_query&&result==0 {
+        if b[0]!=1||b[1]>3||b[2]>16||b[3]>3||u32_at(b,8)>22528||u32_at(b,48)>u32_at(b,8){return Err("Invalid identification snapshot".into());}Some(b.to_vec())
+    }else{None};
+    Ok(Response{identification,rtmi,encoder,homing_config,protocol_version:2,operation:p[1],request_id:q.request_id,boot_id:boot.to_string(),session_id:u32_at(p,14),task_id:u32_at(p,18),timestamp_ms:u32_at(p,24),result,result_name,replayed:p[23]&1!=0,pending:p[23]&2!=0,device,motor:snapshot})
 }
 
 #[cfg(test)]
@@ -226,6 +240,35 @@ mod tests {
         let decoded=decode(9,&q,&r).unwrap();assert!(decoded.motor.is_none());assert_eq!(decoded.encoder.unwrap()[4],43210);
     }
     #[test]
+    fn identification_contract() {
+        for loop_id in 0..4 {
+            let q=req(Command::IdentStart{loop_id,amplitude:50,duration_ms:3000,travel_counts:32768,sampling:None,excitation_sampling:None});
+            let p=encode(9,&q).unwrap();
+            assert_eq!(p[1],28);assert_eq!(p.len(),35);assert_eq!(p[22],loop_id);
+            assert_eq!(u32_at(&p,23),50);assert_eq!(u32_at(&p,27),3000);
+        }
+        assert!(encode(9,&req(Command::IdentStart{loop_id:4,amplitude:50,duration_ms:3000,travel_counts:32768,sampling:None,excitation_sampling:None})).is_err());
+        for sampling in [0,97,127,255] {
+            let p=encode(9,&req(Command::IdentStart{loop_id:1,amplitude:50,duration_ms:3000,travel_counts:32768,sampling:Some(sampling),excitation_sampling:None})).unwrap();
+            assert_eq!(p.len(),36);assert_eq!(p[35],sampling);
+        }
+        for sampling in [None,Some(0),Some(7),Some(255)] {
+            let p=encode(9,&req(Command::IdentStart{loop_id:2,amplitude:50,duration_ms:3000,travel_counts:32768,sampling,excitation_sampling:Some(255)})).unwrap();
+            assert_eq!(p.len(),37);assert_eq!(&p[35..],&[sampling.unwrap_or(7),255]);
+        }
+        assert_eq!(encode(9,&req(Command::IdentAbort)).unwrap()[1],29);
+        let q=req(Command::IdentState{cursor:10});let p=encode(9,&q).unwrap();
+        assert_eq!(&p[22..],&[4,10,0,0,0]);
+        let mut r=vec![0;124];r[..22].copy_from_slice(&p[..22]);
+        r[28]=1;r[29]=2;r[30]=9;r[31]=1;
+        r[36..40].copy_from_slice(&12u32.to_le_bytes());
+        r[76..80].copy_from_slice(&12u32.to_le_bytes());
+        assert_eq!(decode(9,&q,&r).unwrap().identification.unwrap().len(),96);
+        assert!(decode(9,&q,&r[..123]).is_err());
+        r[36..40].copy_from_slice(&22528u32.to_le_bytes());assert!(decode(9,&q,&r).is_ok());
+        r[36..40].copy_from_slice(&22529u32.to_le_bytes());assert!(decode(9,&q,&r).is_err());
+    }
+    #[test]
     fn native_rtmi_contract() {
         let q=req(Command::RtmiConfig{enabled:true,sampling:255,addresses:[0x154,0x153,0x155,0x251,65535,65535,65535],decimation:2});
         let p=encode(9,&q).unwrap();assert_eq!(p.len(),39);assert_eq!(p[1],25);assert_eq!(&p[22..26],&[1,255,0x54,1]);
@@ -233,6 +276,13 @@ mod tests {
         let mut r=vec![0;57];r[..22].copy_from_slice(&p[..22]);r[44]=1;r[45]=255;r[46]=1;r[47]=1;r[52]=0;
         let d=decode(9,&q,&r).unwrap();assert!(d.motor.is_none());assert_eq!(d.rtmi.unwrap().len(),29);
         r[52]=7;assert!(decode(9,&q,&r).is_err());r[52]=0;r[47]=8;assert!(decode(9,&q,&r).is_err());
+        for cursor in [0xffff_fffe,0xffff_fffd] {
+            let q=req(Command::RtmiState{cursor});let p=encode(9,&q).unwrap();
+            r.resize(120,0);r[..22].copy_from_slice(&p[..22]);r[47]=8;
+            for i in 0..8{r[52+i*9]=i as u8;}
+            assert_eq!(decode(9,&q,&r).unwrap().rtmi.unwrap().len(),92);
+            r[52+7*9]=8;assert!(decode(9,&q,&r).is_err());
+        }
     }
     #[test]
     fn shared_homing_config_has_separate_write_read_and_start() {
@@ -295,7 +345,7 @@ mod tests {
     fn hardware_semantic_discovery(){
         use std::time::Duration;
         let mut results=vec![];
-        for (key,mode,baud) in [("MOTO_STORAGE_RS485","main485",460800),("MOTO_STORAGE_CAN","maincan",2000000)] {
+        for (key,mode,baud) in [("MOTO_STORAGE_RS485","main485",1500000),("MOTO_STORAGE_CAN","maincan",2000000)] {
             let name=match std::env::var(key){Ok(p)=>p,Err(_)=>continue};
             let serial=serialport::new(&name,baud).timeout(Duration::from_millis(10)).dtr_on_open(false).open().unwrap();
             let mut t=crate::gateway::Transport::new(serial,mode,9);
@@ -343,7 +393,7 @@ mod tests {
         assert!((1..=4).contains(&action));
         let path=std::env::var("MOTO_COMMISSION_REPORT").unwrap();
         let name=std::env::var("MOTO_STORAGE_RS485").unwrap();
-        let serial=serialport::new(name,460800).timeout(Duration::from_millis(10)).dtr_on_open(false).open().unwrap();
+        let serial=serialport::new(name,1500000).timeout(Duration::from_millis(10)).dtr_on_open(false).open().unwrap();
         let mut transport=crate::gateway::Transport::new(serial,"main485",9);
         let mut records=vec![];
         let mut q=Request{request_id:1,boot_id:"0".into(),session_id:0,task_id:0,command:Command::GetState};

@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { HAS_TAURI } from "./api";
 
 export interface DeviceState {
   capabilities: number; motors: number; source: number; active_motor: number;
@@ -25,6 +24,7 @@ export interface SemanticReply {
   device: DeviceState | null; motor: MotorState | null; homing_config?: number[] | null;
   encoder?: number[] | null;
   rtmi?: number[] | null;
+  identification?: number[] | null;
 }
 export interface SemanticView {
   motor: number; bootId: string; receivedAt: number; taskId?: number;
@@ -34,7 +34,6 @@ type Reader = (motor: number, id: number) => Promise<SemanticReply>;
 let encoderSequence = 0;
 /** Passive encoder cache query: opening the page must not claim a motor session. */
 export async function readEncoderSnapshot(motor: number): Promise<SemanticReply> {
-  if (!HAS_TAURI) throw new Error("浏览器预览不提供真实主控状态");
   const request_id = ++encoderSequence;
   const reply = await invoke<SemanticReply>("motor_semantic", { motor, request: {
     request_id, boot_id: "0", session_id: 0, task_id: 0, command: { kind: "encoder_state" },
@@ -44,7 +43,6 @@ export async function readEncoderSnapshot(motor: number): Promise<SemanticReply>
   return reply;
 }
 async function read(motor: number, id: number): Promise<SemanticReply> {
-  if (!HAS_TAURI) throw new Error("浏览器预览不提供真实主控状态");
   const request = async (kind: string) => invoke<SemanticReply>("motor_semantic", { motor, request: {
     request_id: id, boot_id: "0", session_id: 0, task_id: 0, command: { kind },
   } });

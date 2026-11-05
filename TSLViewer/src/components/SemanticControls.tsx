@@ -34,6 +34,7 @@ export function SemanticControls({ children }: { children: ReactNode }) {
     const key=`${app.semantic.bootId}:${app.motor}:${app.semantic.taskId??0}`;
     if(limitNotice.current!==key){limitNotice.current=key;app.toast("warn","到达行程限位");}
     dragging.current=false;
+    latest.current=null; // discard a queued slider target when the MCU ends the task
   };
   const jogError=(e:unknown)=>{app.hostLog("error","motor/jog",`M${app.motor} 点动准备/执行失败 rpm=${cfg.max_rpm}: ${String(e)}`);setError(String(e));if(String(e).includes("到达行程限位"))showLimit();};
   const dragging = useRef(false), latest = useRef<number | null>(null), sending = useRef(false);
@@ -163,7 +164,6 @@ export function SemanticControls({ children }: { children: ReactNode }) {
         <div className="arrival-feedback" role="status" aria-live="polite">
           <b>到位状态：{!s?.feedback_fresh ? "反馈未确认" : s.arrival_phase==null ? "等待主控到位状态" : ["尚无位置任务","轨迹进行中","轨迹结束，等待进入容差","容差内稳定确认中","主控已确认到位"][s.arrival_phase] ?? "未确认"}</b>
           <span>轨迹结束 {s?.arrival_flags!=null ? (s.arrival_flags&1 ? "✓" : "—") : "—"} · 误差进入容差 {s?.arrival_flags!=null ? (s.arrival_flags&2 ? "✓" : "—") : "—"} · 持续稳定 {s?.arrival_ms!=null ? `${Math.min(s.arrival_ms,s.arrival_dwell_ms??0)} / ${s.arrival_dwell_ms} ms` : "—"}</span>
-          <details className="controller-diagnostics"><summary>到位判据</summary><div className="tiny muted">由主控实际反馈确认，容差为本次行程的 0.05%（上限65535 Count），当前 {s?.arrival_tolerance ?? "—"} Count；稳定窗口为容差的10%（最低91 Count，不超过容差），持续200ms。重启后须重新找零，正常完成保持供电。</div></details>
         </div>
         <div className="row-wrap">{[0,50,100].map(p=><Button key={p} disabled={!can||!range} onClick={()=>{setPercent(p);void run(()=>motionCommand({kind:"logical_move",position:count(p)}));}}>{p===0?"0% · 负端":p===50?"50% · 中点":"100% · 正端"}</Button>)}</div>
         <input aria-label="行程百分比" type="range" min={0} max={100} step={.1} value={percent} disabled={!can || !range}

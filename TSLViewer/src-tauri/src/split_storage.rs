@@ -88,7 +88,7 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String> {
     fn hardware_storage_readonly(){
         use std::{time::{Duration,Instant},thread};
         let mut results=vec![];
-        for (key,mode,baud) in [("MOTO_STORAGE_RS485","main485",460800),("MOTO_STORAGE_CAN","maincan",2000000)] {
+        for (key,mode,baud) in [("MOTO_STORAGE_RS485","main485",1500000),("MOTO_STORAGE_CAN","maincan",2000000)] {
             let name=match std::env::var(key){Ok(p)=>p,Err(_)=>continue};
             let serial=serialport::new(&name,baud).timeout(Duration::from_millis(10)).dtr_on_open(false).open().unwrap();
             let mut t=crate::gateway::Transport::new(serial,mode,9);

@@ -292,7 +292,7 @@ flowchart TD
 | 文件 | 作用 |
 |---|---|
 | `src/pages/Homing.tsx` | 页面 UI（「找零控制」卡：方向/步进/安全确认/开始/取消；「找零参数」卡：8 项参数 + 写入配置/从主控读取；顶部 3 张状态卡） |
-| `src/lib/api.ts` | `homingStart` / `homingState` / `homingCancel` / `homingWriteConfig` / `homingReadConfig`；浏览器预览用模拟状态机（读写的就是模拟主控里的参数） |
+| `src/lib/api.ts` | `homingStart` / `homingState` / `homingCancel` / `homingWriteConfig` / `homingReadConfig`，全部经 Tauri 命令直连主控（无模拟回退） |
 | `src/lib/types.ts` | `HomingParams` / `HomingState` / `HomingConfig` |
 | `src-tauri/src/homing.rs` | 协议编解码（含 `HomingConfig::encode/decode`）+ 13 个单测（无判定逻辑） |
 | `src-tauri/src/lib.rs` | 5 个 `#[tauri::command]`，经 `main_control` 的 `op 12/13/14/15/16` 转发 |

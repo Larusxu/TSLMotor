@@ -2,7 +2,7 @@ import TelemetryPanels from "../components/TelemetryPanels";
 import { useEffect, useMemo, useState } from "react";
 import MainboardPid from "./MainboardPid";
 
-import { api, HAS_TAURI } from "../lib/api";
+import { api } from "../lib/api";
 import { useMotorConfiguration } from "../lib/motor-configuration";
 import { controlApi } from "../lib/motor-control";
 import { useApp } from "../lib/app-store";
@@ -208,7 +208,7 @@ function DirectTuningPage() {
               <Button
                 size="sm"
                 variant="ghost"
-                disabled={!app.connected || !HAS_TAURI || app.jobRunning || app.motionActive}
+                disabled={!app.connected || app.jobRunning || app.motionActive}
                 onClick={async () => {
                   try {
                     const observed = await api.readPid();
@@ -389,7 +389,7 @@ function DirectTuningPage() {
               <Button
                 variant="primary"
                 icon={<Icon.Save width={14} height={14} />}
-                disabled={!app.connected || !HAS_TAURI || !app.armed || !confirm || app.jobRunning || app.motionActive}
+                disabled={!app.connected || !app.armed || !confirm || app.jobRunning || app.motionActive}
                 onClick={() => void app.runJob("pid", payload)}
               >
                 应用参数

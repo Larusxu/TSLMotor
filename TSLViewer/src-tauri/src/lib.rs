@@ -12,6 +12,7 @@ mod motor_parameters;
 mod motor_profile;
 mod semantic_control;
 mod rebuild_hil;
+mod pi_auto_hil;
 mod split_storage;
 mod io_rom;
 mod commission;
@@ -19,7 +20,6 @@ mod link;
 mod procs;
 mod proto;
 mod regs;
-mod simport;
 mod storage;
 
 use std::path::PathBuf;

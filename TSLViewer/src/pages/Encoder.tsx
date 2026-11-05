@@ -1,7 +1,7 @@
 import Gauge from "../components/EncoderGauge";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, HAS_TAURI } from "../lib/api";
+import { api } from "../lib/api";
 import { useApp } from "../lib/app-store";
 import { ENCODER_PRESETS, PHI_E_OFFSETS, STORAGE_PRESETS, TESLA_PROFILE } from "../lib/presets";
 import {
@@ -93,7 +93,7 @@ function DirectEncoderPage() {
   }, []);
 
   const readLive = useCallback(async () => {
-    if (!app.connected || !HAS_TAURI) return;
+    if (!app.connected) return;
     try {
       const items = await api.readMany([0x24d, 0x247, 0x251, 0x240, 0x250, 0x242, 0x0c3, 0x103, 0x244, 0x245]);
       const map: Record<number, number> = {};
@@ -174,7 +174,6 @@ function DirectEncoderPage() {
 
   return (
     <div className="grid" style={{ gap: 14 }}>
-      {!HAS_TAURI && <Notice tone="warn">当前为网页预览，未连接真实串口后端；不会写入编码器，也不显示模拟寄存器作为实板回读。请在桌面通信后端中执行硬件配置。</Notice>}
       <div className="grid flow-2-1">
         <div className="col-stack">
         <Card
@@ -316,12 +315,12 @@ function DirectEncoderPage() {
               <Button
                 variant="primary"
                 icon={<Icon.Save width={14} height={14} />}
-                disabled={!HAS_TAURI || !app.connected || !app.armed || !confirmWrite || app.jobRunning}
+                disabled={!app.connected || !app.armed || !confirmWrite || app.jobRunning}
                 onClick={() => void app.runJob("encoder", payload)}
               >
                 写入编码器配置
               </Button>
-              <Button variant="ghost" disabled={!HAS_TAURI || !app.connected || app.jobRunning} onClick={() => void readLive()}>
+              <Button variant="ghost" disabled={!app.connected || app.jobRunning} onClick={() => void readLive()}>
                 刷新回读
               </Button>
               {!app.armed && <span className="tiny muted">需解锁 ARM</span>}
@@ -398,7 +397,7 @@ function DirectEncoderPage() {
               <Button
                 size="sm"
                 variant={liveOn ? "danger" : "primary"}
-                disabled={!HAS_TAURI || !app.connected || app.jobRunning}
+                disabled={!app.connected || app.jobRunning}
                 title={liveOn ? "当前：开启（正在连续回读）· 点击关闭" : "当前：关闭 · 点击开启连续回读"}
                 onClick={() => setLiveOn((v) => !v)}
               >

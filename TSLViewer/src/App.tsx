@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AppProvider, useApp } from "./lib/app-store";
-import { api, HAS_TAURI } from "./lib/api";
+import { api } from "./lib/api";
 import { BAUD_RATES } from "./lib/presets";
 import { pwmHz } from "./lib/units";
 import { ArmSwitch, Badge, Button, Icon, SelectField, Toasts } from "./components/ui";
@@ -14,6 +14,7 @@ import Encoder from "./pages/Encoder";
 import Homing from "./pages/Homing";
 import Axis from "./pages/Axis";
 import Tuning from "./pages/Tuning";
+import ParameterTuning from "./pages/ParameterTuning";
 import LoopTest from "./pages/LoopTest";
 import Registers from "./pages/Registers";
 import Sequence from "./pages/Sequence";
@@ -25,6 +26,7 @@ type Page =
   | "encoder"
   | "homing"
   | "axis"
+  | "autotuning"
   | "tuning"
   | "looptest"
   | "storage"
@@ -33,7 +35,7 @@ type Page =
   | "logs";
 
 /** Pages that only matter while commissioning; hidden in production mode. */
-const OP_ONLY = new Set<Page>(["encoder", "homing", "axis", "tuning", "looptest", "storage", "registers"]);
+const OP_ONLY = new Set<Page>(["encoder", "homing", "axis", "tuning", "autotuning", "looptest", "storage", "registers"]);
 
 const NAV: {
   group: string;
@@ -52,6 +54,7 @@ const NAV: {
     group: "调校",
     items: [
       { id: "tuning", label: "PID 与限幅", hint: "TUNE", icon: <Icon.Tuning /> },
+      { id: "autotuning", label: "参数整定", hint: "IDENT", icon: <Icon.Tuning /> },
       { id: "looptest", label: "环路测试", hint: "LOOP", icon: <Icon.Gauge /> },
       { id: "storage", label: "板载存储", hint: "W25 / M24", icon: <Icon.Save /> },
       { id: "registers", label: "寄存器", hint: "MAP", icon: <Icon.Registers /> },
@@ -92,6 +95,7 @@ const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
     desc: "三级级联参数、单位换算与阶跃响应实测。电流归一化选错会让增益差 256 倍。",
     crumb: "TUNING",
   },
+  autotuning: { title: "参数整定", desc: "TMC PRBS 系统辨识、PI计算与实机参数试用。", crumb: "PARAMETER IDENTIFICATION" },
   looptest: {
     title: "环路测试",
     desc: "在受保护的行程内做恒 Iq / 恒速度探测、速度 PI 自动辨识与位置环跟随测试，并看波形。",
@@ -200,10 +204,6 @@ function Shell() {
             <span>PWM</span>
             <b>{(pwmHz(app.cal.pwmMaxCount) / 1000).toFixed(2)} kHz</b>
           </div>
-          <div className="rail-meta">
-            <span>构建</span>
-            <b>{HAS_TAURI ? "desktop" : "preview"}</b>
-          </div>
         </div>
       </aside>
 
@@ -235,7 +235,7 @@ function Shell() {
           </div>
           <div style={{ width: 140 }}>
             <SelectField
-              value={app.mode==="main485"?460800:app.mode==="maincan"?2000000:app.baud}
+              value={app.mode==="main485"?1500000:app.mode==="maincan"?2000000:app.baud}
               onChange={app.setBaud}
               options={baudOptions}
               disabled={app.connected || app.mode!=="direct"}
@@ -254,7 +254,7 @@ function Shell() {
               断开
             </Button>
           ) : (
-            <Button variant="primary" onClick={() => void app.connect()} disabled={app.busy || (!HAS_TAURI && app.mode!=="direct")} title={!HAS_TAURI && app.mode!=="direct" ? "网页显示真实页面结构，连接硬件需要桌面通信后端" : undefined}>
+            <Button variant="primary" onClick={() => void app.connect()} disabled={app.busy}>
               {app.busy ? "连接中…" : "连接"}
             </Button>
           )}
@@ -315,6 +315,7 @@ function Shell() {
             {page === "homing" && <Homing />}
             {page === "axis" && <Axis />}
             {page === "tuning" && <Tuning key={app.motor} />}
+            {page === "autotuning" && <ParameterTuning key={app.motor} />}
             {page === "looptest" && <LoopTest />}
             {page === "storage" && <Storage />}
             {page === "registers" && <Registers />}

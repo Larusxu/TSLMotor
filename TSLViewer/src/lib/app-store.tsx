@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { api, on, HAS_TAURI } from "./api";
+import { api, on } from "./api";
 import { loadConnectionMode, saveConnectionMode } from "./connection-preferences";
 import { applyAlignmentResult } from "./alignment";
 import { convertSignal, SIGNALS, TESLA_PROFILE, type Signal } from "./presets";
@@ -19,6 +19,7 @@ import { semanticMotion } from "./semantic-motion";
 import { HomingNotification } from "./homing-notification";
 import { readRatedRpm, saveRatedRpm } from "./board-speed";
 import { NativeRtmi } from "./native-rtmi";
+import { acquisitionLane } from './pi-auto/acquisition';
 import { applyTheme, loadSettings, saveSettings, type Settings } from "./settings";
 import { pwmHz } from "./units";
 import type { AxisState, CalibResult, JobDone, JobProgress, LinkStats, LogLine, PortInfo } from "./types";
@@ -285,15 +286,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [port, toast]);
 
   const connect = useCallback(async () => {
-    if (!HAS_TAURI && mode !== "direct") {
-      toast("warn", "网页仅预览主控界面，不提供硬件通信；请使用桌面通信后端连接真实主控");
-      return;
-    }
     setBusy(true);
     setFwVersion("");setHandId(null);
     setAlignments({});
     try {
-      const st = await api.connect(port, mode==="main485" ? 460800 : mode==="maincan" ? 2000000 : baud, mode, motor);
+      const st = await api.connect(port, mode==="main485" ? 1500000 : mode==="maincan" ? 2000000 : baud, mode, motor);
       setStats(st);
       setConnected(st.connected);
       setMotorTmc("unknown");
@@ -334,6 +331,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     setStreaming(false);
   }, [mode, trace]);
+
+  useEffect(()=>acquisitionLane.beforeCapture(async()=>{
+    await stopStream();
+    setTraceStatus('参数整定使用独立RTMI采集；普通遥测已暂停');
+  }),[stopStream]);
 
   const disconnect = useCallback(async () => {
     await stopStream().catch(e=>toast("warn",`采集停止未确认，关闭会话后主控继续清理：${String(e)}`));
@@ -441,7 +443,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       sigByCh.forEach((sig, ch) => scope.ensure(ch, sig, sig.color));
       if (mode === "direct") await api.startRtmi(assigned, sampling, false);
       else {
-        if (!connected || !HAS_TAURI) throw Error("请连接真实主控后开始采集");
+        if (!connected) throw Error("请连接真实主控后开始采集");
         if (!semantic.state || semantic.motor !== motor || semantic.bootId === "0") throw Error("等待当前电机的主控状态");
         traceRateMark.current = { at: Date.now(), frames: 0 };
         await trace.start(motor,assigned,sampling,mode==="maincan"?12:2,batch=>{
@@ -782,7 +784,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const message=`M${next.motor} boot=${next.bootId} task=${next.taskId ?? 0} MCU=${next.state.sampled_at_ms}ms `+
       changed.map(k=>`${k}:${old?.state&&old.motor===next.motor&&old.bootId===next.bootId?String(old.state[k]):"?"}→${String(next.state![k])}`).join(" ")+
       (next.state.fault?" 故障="+[[1,"急停"],[2,"持续过流"],[4,"反馈超时"],[8,"电气故障"],[16,"越界"],[32,"TMC I/O"],[64,"停止超时"]].filter(([bit])=>(next.state!.fault&Number(bit))!==0).map(([,name])=>name).join("/"):"");
-    appendLog({ts:Date.now(),level:next.state.fault||next.state.last_error?"error":changed.some(k=>["logic_power","align_valid","span_valid"].includes(k)&&!next.state![k])?"warn":"info",source:"motor/state",message});
+    const travelStop=next.state.last_error===15&&!next.state.fault;
+    const retryableStop=next.state.last_error===3&&!next.state.fault;
+    appendLog({ts:Date.now(),level:next.state.fault||(next.state.last_error&&!travelStop&&!retryableStop)?"error":travelStop||retryableStop||changed.some(k=>["logic_power","align_valid","span_valid"].includes(k)&&!next.state![k])?"warn":"info",source:"motor/state",message:message+(travelStop?" 到达行程限位，已请求停止；授权与找零记录保留，可向行程内移动":retryableStop?" 运动条件暂未满足，已请求关闭PWM；设备未锁存故障，可再次使能":"")});
   },[semantic,appendLog]);
 
   useEffect(() => semanticMotion.subscribeErrors(error => {

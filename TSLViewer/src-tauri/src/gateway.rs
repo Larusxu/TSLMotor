@@ -18,6 +18,40 @@ pub fn crc(p: &[u8]) -> u16 {
     }
     c
 }
+fn matching_rtu_reply(input: &[u8], request: &[u8]) -> Option<Vec<u8>> {
+    for start in 0..input.len().saturating_sub(4) {
+        if input[start..start+2] != [1,0x41] { continue; }
+        let n=input[start+2] as usize;
+        if !(7..=135).contains(&n) || start+n+5>input.len() { continue; }
+        let frame=&input[start..start+n+5];
+        if crc(frame)!=0 { continue; }
+        let reply=&frame[3..3+n];
+        if reply[..5]==request[..5] && n==7+reply[5] as usize {
+            return Some(reply.to_vec());
+        }
+    }
+    None
+}
+#[cfg(test)]
+mod rtu_resync_tests {
+    use super::*;
+    fn frame(payload:&[u8])->Vec<u8>{let mut v=vec![1,0x41,payload.len() as u8];v.extend(payload);v.extend(crc(&v).to_le_bytes());v}
+    #[test]
+    fn ignores_noise_partial_crc_and_stale_frames_without_retransmission(){
+        let request=[1,9,0,9,32,0,0];
+        let reply=[1,9,0,9,32,1,0,42];
+        let good=frame(&reply);
+        let mut broken=good.clone();broken[5]^=1;
+        let mut input=vec![0x5c,0,2,1,0x41,135];
+        input.extend(broken);input.extend(frame(&[1,8,0,9,32,0,0]));
+        input.extend(&good[..good.len()-1]);
+        assert_eq!(matching_rtu_reply(&input,&request),None);
+        input.push(*good.last().unwrap());
+        assert_eq!(matching_rtu_reply(&input,&request),Some(reply.to_vec()));
+        let mut wrong_len=reply;wrong_len[5]=2;
+        assert_eq!(matching_rtu_reply(&frame(&wrong_len),&request),None);
+    }
+}
 pub trait Wire: Read + Write + Send {
     fn clear(&self, which: ClearBuffer) -> io::Result<()>;
     fn available(&self) -> io::Result<u32>;
@@ -104,21 +138,15 @@ impl Transport {
             wire.extend(crc(&wire).to_le_bytes());
             self.serial.write_all(&wire)?;
             self.serial.flush()?;
-            let mut header = Vec::new();
-            while header.len() < 3 {
-                header.push(self.byte(end)?);
+            // A partial/late reply must not leave every following command at
+            // a different byte offset. Resynchronize by CRC and request identity;
+            // never resend a command whose execution may already have occurred.
+            let mut input = Vec::new();
+            loop {
+                input.push(self.byte(end)?);
+                if let Some(reply) = matching_rtu_reply(&input, &q) { break reply; }
+                if input.len() > 140 { input.remove(0); }
             }
-            if header[0] != 1 || header[1] != 0x41 || header[2] > 135 {
-                return Err(err(format!("主控 RTU 头错误 header={header:02x?} motor={motor} op={op}")));
-            }
-            let n = header[2] as usize;
-            for _ in 0..n + 2 {
-                header.push(self.byte(end)?);
-            }
-            if crc(&header) != 0 {
-                return Err(err("主控 RTU CRC 错误"));
-            }
-            header[3..3 + n].to_vec()
         } else {
             for (i, part) in q.chunks(6).enumerate() {
                 let last = (i + 1) * 6 >= q.len();
@@ -421,7 +449,7 @@ mod integration {
     #[test]
     #[ignore = "requires connected main board; read-only requests and logic power OFF only"]
     fn hardware_gateway_readonly() {
-        for (key, mode, baud) in [("MOTO_HW_RS485", "main485", 460800),
+        for (key, mode, baud) in [("MOTO_HW_RS485", "main485", 1500000),
                                   ("MOTO_HW_CAN", "maincan", 2000000)] {
             let port = std::env::var(key).expect("set both hardware port variables");
             let serial = serialport::new(port, baud)
@@ -449,7 +477,7 @@ mod integration {
         let rounds: u32 = std::env::var("MOTO_STRESS_ROUNDS").unwrap_or("100".into()).parse().unwrap();
         assert!((1..=10000).contains(&rounds));
         let name = std::env::var(if mode=="main485" {"MOTO_HW_RS485"} else {"MOTO_HW_CAN"}).unwrap();
-        let baud = if mode=="main485" {460800} else {2000000};
+        let baud = if mode=="main485" {1500000} else {2000000};
         let open = || Transport::new(serialport::new(&name, baud).timeout(Duration::from_millis(8))
                     .dtr_on_open(false).open().unwrap(), &mode, 1);
         let mut t = open();
@@ -478,7 +506,7 @@ mod integration {
     #[test]
     #[ignore = "real controller identity read only; both adapters required"]
     fn hardware_hand_identity_read() {
-        for (key,mode,baud) in [("MOTO_HW_RS485","main485",460800),("MOTO_HW_CAN","maincan",2000000)] {
+        for (key,mode,baud) in [("MOTO_HW_RS485","main485",1500000),("MOTO_HW_CAN","maincan",2000000)] {
             let serial=serialport::new(std::env::var(key).unwrap(),baud)
                 .timeout(Duration::from_millis(8)).dtr_on_open(false).open().unwrap();
             let mut t=Transport::new(serial,mode,1);
@@ -501,7 +529,7 @@ mod integration {
         let rounds: u32 = std::env::var("MOTO_STRESS_ROUNDS").unwrap_or("100".into()).parse().unwrap();
         assert!((1..=500).contains(&rounds));
         let started = Instant::now();
-        for (key, mode, baud) in [("MOTO_HW_RS485", "main485", 460800),
+        for (key, mode, baud) in [("MOTO_HW_RS485", "main485", 1500000),
                                   ("MOTO_HW_CAN", "maincan", 2000000)] {
             let name = std::env::var(key).expect("set hardware ports");
             let mut calls = 0;

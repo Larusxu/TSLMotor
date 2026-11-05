@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { HAS_TAURI } from "./api";
 
 export type StorageReply = {
   id: number; phase: number; result: number; motor: number; operation: number;
@@ -12,7 +11,6 @@ function nextId() {
   return lastId;
 }
 async function send(motor: number, operation: number, id: number, offset = 0, data: number[] = []) {
-  if (!HAS_TAURI) throw new Error("存储操作需要连接真实主控的 Tauri 后端，浏览器演示不会模拟保存成功");
   return invoke<StorageReply>("motor_storage", { motor, request: { id, operation, offset, data } });
 }
 const errors: Record<number, string> = {

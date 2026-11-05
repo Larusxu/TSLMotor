@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, HAS_TAURI } from "../lib/api";
+import { api } from "../lib/api";
 import { useMotorConfiguration } from "../lib/motor-configuration";
 import type { MotionMode, ParameterState } from "../lib/motor-control";
 import { useApp } from "../lib/app-store";
@@ -33,7 +33,7 @@ export function MotorControls({ homing }: { homing: boolean }) {
   const lastSlider = useRef(0);
   const rangeSeen = useRef<number | null>(null);
   const enabled = !!state?.enabled && !!state?.active;
-  const connected = app.connected && app.mode !== "direct" && HAS_TAURI;
+  const connected = app.connected && app.mode !== "direct";
   const locked = app.motionActive || busy || homing || app.jobRunning;
   const canMove = connected && enabled && safe && app.armed && !busy && !homing && !error && state?.safety_phase !== "FAULT_LATCHED";
   const show = (value: number | null | undefined, digits = 1) => value == null ? "—" : value.toFixed(digits);
@@ -173,7 +173,6 @@ export function MotorControls({ homing }: { homing: boolean }) {
       {cfg.planning === "time" && <Notice tone="warn">目标时间只做静止起点的运动学可行性估算；不保证带载精确到位，不会自动提高任何限幅。</Notice>}
       <Check checked={safe} onChange={setSafe}>已核对方向、实际行程及限流，机构空间安全</Check>
       {!state?.zero_valid && <Notice tone="warn">行程零点无效：先在本页完成找零；历史对齐结果不能代替当前零点。</Notice>}
-      {!HAS_TAURI && <Notice tone="warn">浏览器预览不连接或模拟电机。实际控制需要桌面通信后端。</Notice>}
       {error && <div role="alert"><Notice tone="warn">{error}</Notice></div>}
     </Card>
     <div className="grid cols-3">

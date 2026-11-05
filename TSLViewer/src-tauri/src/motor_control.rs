@@ -773,7 +773,7 @@ mod tests {
         let link = Arc::new(Link::new());
         let control = Arc::new(Control::default());
         let busy = Arc::new(AtomicBool::new(false));
-        link.open(&port, 460800, "main485", 9).unwrap();
+        link.open(&port, 1500000, "main485", 9).unwrap();
         struct Cleanup(Arc<Link>, Arc<Control>);
         impl Drop for Cleanup {
             fn drop(&mut self) {

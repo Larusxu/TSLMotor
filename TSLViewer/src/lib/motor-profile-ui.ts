@@ -123,8 +123,9 @@ async function applyConfiguration(motor:number,build:(before:number[])=>number[]
   semanticMotion.report("ok",`M${motor} 配置完成：TMC/W25 一致，编辑输入保持不变`);
   return after;
   } catch(error) {
-    // An unverified partial write must not retain permission to move.
-    try { await semanticMotion.permit(motor,false); } catch { /* primary failure remains visible */ }
+    // A host validation/storage error must not revoke authorization. The MCU
+    // owns PWM shutdown for an actual partial TMC write or electrical fault.
+    // Keep the exact failed stage visible without inventing another fault.
     semanticMotion.report("error",`M${motor} 配置失败阶段=${stage}：${String(error)}`);throw error;
   }
 }

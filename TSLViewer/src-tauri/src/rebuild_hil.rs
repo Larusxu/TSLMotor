@@ -624,7 +624,7 @@ mod tests {
         assert!(["storage","motion","safety","partition","travel","jog","jog_home","configuration","homing_policy","initialization","pi_calibration","rtmi","rtmi_preflight","rtmi_dump","enable_entry","uart_isolation","passive_state","passive_watch","config_probe","mode_apply","apply_idle","board_policy","modes","four_tasks","contact_online","pi_overshoot","jog_coast","recovery_idle"].contains(&scenario.as_str()));
         let port=std::env::var("MOTO_STORAGE_RS485").unwrap_or("COM10".into());
         let mode=std::env::var("MOTO_HIL_MODE").unwrap_or("main485".into());
-        let baud=if mode=="maincan"{2000000}else{460800};
+        let baud=if mode=="maincan"{2000000}else{1500000};
         let serial=serialport::new(port,baud).timeout(Duration::from_millis(10)).dtr_on_open(false).open().unwrap();
         let path=std::env::var("MOTO_COMMISSION_REPORT").expect("Evidence path required");
         let mut h=Hil{t:Transport::new(serial,&mode,9),q:Request{request_id:0,boot_id:"0".into(),session_id:0,task_id:0,command:Command::GetState},log:vec![],path};

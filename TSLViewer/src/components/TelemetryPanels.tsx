@@ -91,7 +91,7 @@ export default function TelemetryPanels(){
                 </Field>
               </div>
               <Notice tone="warn">
-                {app.mode === "direct" ? "串口 115200 下 4 通道 × 5 字节 ≈ 1.7 ms，触发周期需大于它。想上 1 kHz 请用 921600 以上。" : "主控转发芯片原生 RTMI，CRC 校验。半双工通信限制触发率不超过约 100 Hz；485 每 2 组、CAN 每 12 组转发一组，保留实际采样时刻。实际 sampling 与丢帧见曲线下方。请在驱动禁能时开始、停止或修改采集配置。"}
+                {app.mode === "direct" ? "RTMI 使用芯片原生分频；请确认直连串口波特率与芯片一致。" : "主控转发芯片原生 RTMI，CRC 校验。业务串口与电机串口使用 1.5 Mbps，保留实际采样时刻。实际 sampling 与丢帧见曲线下方。请在驱动禁能时开始、停止或修改采集配置。"}
               </Notice>
               <div className="row" style={{ gap: 6 }}>
                 <span className="tiny muted">信号极性</span>

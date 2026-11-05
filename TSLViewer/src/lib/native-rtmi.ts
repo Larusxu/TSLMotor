@@ -1,5 +1,6 @@
 import { semanticMotion } from "./semantic-motion";
 import type { RtmiBatch } from "./types";
+import { acquisitionLane } from './pi-auto/acquisition';
 
 export function decodeRtmi(data:number[]) {
   if(data.length<20)throw Error("RTMI 响应过短");
@@ -24,10 +25,12 @@ export class NativeRtmi {
   async start(motor:number,channels:[number,number][],sampling:number,decimation:number,
       batch:(b:RtmiBatch)=>void,status:(s:{sampling:number;lost:number;errors:number})=>void,
       fail:(e:unknown)=>void) {
+    if(acquisitionLane.busy())throw Error('正在辨识采集，普通遥测在整定结束后可重新开始');
     await this.stop();
+    if(acquisitionLane.busy())throw Error('正在辨识采集，普通遥测暂不改变RTMI配置');
     const addresses=Array(7).fill(65535);
     for(const [ch,addr] of channels){if(ch<0||ch>6)throw Error("RTMI 通道超出范围");addresses[ch]=addr;}
-    await semanticMotion.command(motor,{kind:"rtmi_config",enabled:true,sampling,addresses,decimation});
+    await semanticMotion.configureRtmi(motor,{kind:"rtmi_config",enabled:true,sampling,addresses,decimation});
     this.motor=motor;
     const ready=await semanticMotion.wait(motor,10000,r=>r.motor?.drive===0);
     this.boot=ready.boot_id;this.cursor=this.generation=0;this.offset=null;this.wrap=this.lastTime=0;
@@ -58,7 +61,7 @@ export class NativeRtmi {
     await this.inFlight;this.inFlight=null;
     if(!this.motor)return;
     const motor=this.motor;
-    await semanticMotion.command(motor,{kind:"rtmi_config",enabled:false,sampling:255,addresses:Array(7).fill(65535)});
+    await semanticMotion.configureRtmi(motor,{kind:"rtmi_config",enabled:false,sampling:255,addresses:Array(7).fill(65535)});
     await semanticMotion.wait(motor,10000,r=>r.motor?.drive===0);
     this.motor=0;
   }

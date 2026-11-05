@@ -15,7 +15,6 @@
 cd TSLViewer
 npm install
 
-npm run dev          # 仅前端（浏览器 + 内置模拟器，无需硬件）
 npm run app:dev      # 完整桌面应用（Tauri 窗口，接真实串口）
 npm run build        # 类型检查 + 前端产物
 npm run app:build    # 生成 Windows 安装包（msi / nsis）
@@ -29,7 +28,8 @@ npm run app:build    # 生成 Windows 安装包（msi / nsis）
 .\scripts\start.ps1
 ```
 
-程序不存在时会提示先执行 `npm run app:exe`（只构建不打包）；需要重新构建、开发模式或浏览器预览时用下面的脚本或 npm 命令。
+程序不存在时会提示先执行 `npm run app:exe`（只构建不打包）；需要重新构建或开发模式（
+pm run app:dev）时用下面的脚本。
 
 ### 1.2 构建脚本
 
@@ -63,33 +63,6 @@ npm run app:build    # 生成 Windows 安装包（msi / nsis）
 | 安装包 | `src-tauri/target/release/bundle/` |
 | 前端静态产物 | `dist/` |
 
-**浏览器模拟模式**：直接 `npm run dev` 打开页面时，检测不到 Tauri 运行时，`src/lib/api.ts` 会切到内置模拟器（虚拟 COM6、CHIP.ID = 0x64600001、正弦转速/电流、可跑完对齐与测试序列）。用于看界面、演示、录屏，**不产生任何串口流量**。侧栏底部"构建 = preview"即为模拟模式。
-
-### 1.2 无硬件：桌面版内置模拟器 `SIM1`
-
-没有板子也能用完整桌面应用：端口下拉的**第一项固定是 `SIM1`（内置模拟器 · 无需硬件）**，选中并连接即可，串口号与波特率随意（模拟器不校验波特率）。
-
-模拟器独立成工程 [`TSLMotor/TSLmoni`](../TSLmoni/README.md)（零依赖 Rust crate + 可独立运行的 CLI），桌面端通过 path 依赖引入，`src-tauri/src/simport.rs` 只做一层 `gateway::Wire` 适配——网关帧（RS485 Modbus-RTU / USB-CAN-A）、TMC 数据报、所有 procs 与 RTMI 走的都是**真实代码路径**。行为对齐 `TSLHand` 固件：
-
-| 项 | 模拟行为 |
-| --- | --- |
-| 主控协议 | `moto/los_moto.c` 的 op 码（WRITE/READ/CLEAR/INFO/POWER/ALL_OFF/KEEPALIVE/OPEN/CLOSE/BOARD/HAND_ID）与错误码（OK/BAD/NOT_READY/IO/OVERFLOW/BUSY） |
-| 节点/N 路 | 16 个 TMC6460 节点，路由表同 `Modbus/los_motor_routes.c`（uart / chip / output / sys / connector），`CHIP.ID = 0x64600001` |
-| 占用与租约 | `MOTO_OPEN` 抢占 owner，5 s 无请求自动 `ALL_OFF`；他人访问返回 `MOTO_BUSY` |
-| 板级快照 | `MOTO_BOARD(start,count)`：`0x08` 起 16 字符固件串 `TSL-SIM FWHOST01`，word 73 为 HandID（可在界面改 HandID 后回读） |
-| 电源 | 4 片 MAX20087 的掩码，`MOTO_INFO` 回读 `config = 16|mask` 与 `diagnostics_live` |
-| RX 缓冲 | 每节点 2048 B 环形缓冲，溢出后 `MOTO_READ` 返回 `MOTO_OVERFLOW`，需 `MOTO_CLEAR` |
-| 电机侧 | 10-bit 寄存器全量读写；速度/位置/力矩模式有简单动力学（位置/速度/电流回读会动），RTMI 帧按 `UART.CONTROL` 采样率与 `RTMI_CH_x` 映射合成 |
-
-注意：模拟器**不做真实 FOC 与电流环物理响应**，阶跃/PID 辨识看到的是合成波形；寄存器读写、电源时序、协议时序与固件一致。
-
-独立使用（不启动上位机）时：
-
-```powershell
-cd TSLMotor\TSLmoni
-cargo run --release --bin tslmoni -- --selftest    # 协议自检
-cargo run --release --bin tslmoni -- --rpc         # 十六进制报文服务器（stdin/stdout）
-```
 
 ---
 
@@ -218,7 +191,7 @@ TSLViewer/
 ├─ src/                       前端
 │  ├─ pages/                  8 个页面
 │  ├─ components/             ui 原语、Scope 画布示波器、Sidebar、TopBar
-│  ├─ lib/                    api（真实+模拟）、scope 环形缓冲、store、寄存器表、单位换算
+│  ├─ lib/                    api（Tauri 命令封装）、scope 环形缓冲、store、寄存器表、单位换算
 │  └─ styles/                 设计令牌 + 应用样式
 ├─ src-tauri/
 │  ├─ src/proto.rs            帧解析 / 组包 / CRC（含单测）
@@ -231,8 +204,6 @@ TSLViewer/
 ├─ scripts/
 │  ├─ build.ps1 / build.bat   构建：默认只出 exe，-Bundle 才打安装包
 │  ├─ start.ps1 / start.bat   一键启动：直接运行已构建的 tslviewer.exe
-│  ├─ start-web.ps1 / .bat    浏览器预览（vite dev server）
-│  └─ test_gateway_ui.py      UI 回归（需 Vite 已启动 + Playwright + Edge）
 ├─ build-logs/                构建日志（gitignored）
 └─ dist/                      构建产物
 ```

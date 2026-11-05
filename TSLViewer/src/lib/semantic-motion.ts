@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { HAS_TAURI } from "./api";
 import type { SemanticReply } from "./semantic-state";
 
 export type MotorCommand = { kind: string; [key: string]: unknown };
@@ -29,12 +28,12 @@ export class SemanticMotion {
   private jogAt = 0;
   private heldTask = 0;
   private observers = new Set<(r: SemanticReply, motor: number) => void>();
-  private logObservers = new Set<(level: "info" | "ok" | "error", message: string) => void>();
-  subscribeLog(fn: (level: "info" | "ok" | "error", message: string) => void) {
+  private logObservers = new Set<(level: "info" | "ok" | "warn" | "error", message: string) => void>();
+  subscribeLog(fn: (level: "info" | "ok" | "warn" | "error", message: string) => void) {
     this.logObservers.add(fn); return () => { this.logObservers.delete(fn); };
   }
-  report(level: "info" | "ok" | "error", message: string) { this.log(level, message); }
-  private log(level: "info" | "ok" | "error", message: string) {
+  report(level: "info" | "ok" | "warn" | "error", message: string) { this.log(level, message); }
+  private log(level: "info" | "ok" | "warn" | "error", message: string) {
     this.logObservers.forEach(fn => fn(level, message));
   }
   private errors = new Set<(error: string) => void>();
@@ -47,7 +46,6 @@ export class SemanticMotion {
     const next = this.chain.then(fn, fn); this.chain = next.catch(() => undefined); return next;
   }
   private async call(motor: number, command: MotorCommand): Promise<SemanticReply> {
-    if (!HAS_TAURI) throw Error("需要真实主控通信后端");
     const id = ++this.seq;
     const detailed = !["get_state","position_state","pulse","jog_renew","permit"].includes(command.kind);
     const context = `M${motor} ${command.kind} request=${id} boot=${this.boot} session=${this.session} task=${this.task}`;
@@ -76,7 +74,7 @@ export class SemanticMotion {
     if (detailed) this.log("ok", `${context} ${r.result_name}(${r.result}) ${Date.now()-sentAt}ms pending=${r.pending} drive=${r.motor?.drive ?? "-"} fault=${r.motor?.fault ?? "-"} error=${r.motor?.last_error ?? "-"}`);
     this.observers.forEach(fn => fn(r, motor));
     return r;
-    } catch (error) { this.log("error", `${context} ${String(error)}`); if(!String(error).includes("到达行程限位"))this.errors.forEach(fn => fn(String(error))); throw error; }
+    } catch (error) { this.log(String(error).includes("到达行程限位")?"warn":"error", `${context} ${String(error)}`); if(!String(error).includes("到达行程限位"))this.errors.forEach(fn => fn(String(error))); throw error; }
   }
   async open(motor: number) {
     return this.queue(async () => {
@@ -148,7 +146,7 @@ export class SemanticMotion {
     if(["mode","limits","apply_configuration","commission","clear_fault"].includes(cmd.kind))this.prepared=null;
     await this.open(motor);
     if (["jog_start","velocity_start","logical_move","logical_work","move","work"].includes(cmd.kind)) {
-      let state=await this.queue(()=>this.call(motor,{kind:"get_state"}));
+      let state=await this.waitForStop(motor,epoch);
       if(epoch!==this.motionEpoch)throw Error("运动准备已取消");
       if(state.motor?.drive===0)await this.enable(motor);
     }
@@ -189,9 +187,46 @@ export class SemanticMotion {
       await new Promise(resolve => setTimeout(resolve, 100));
       const r = await this.command(motor, { kind: "get_state" });
       if (r.motor?.fault || (r.motor?.last_error && r.motor.last_error!==15)) throw Error(`M${motor} 主控任务失败 fault=${r.motor.fault}, error=${r.motor.last_error}${r.motor.last_error===13 ? "（设备读写失败，请确认电机编号、连接和供电）" : ""}`);
-      if (r.motor?.drive !== 1 && !r.motor?.pending_action && accept(r)) return r;
+      if (!r.pending && r.motor?.drive !== 1 && !r.motor?.pending_action && accept(r)) return r;
       if (Date.now() >= end) throw Error("主控任务等待超时；未自动重发，请读取当前状态");
     }
+  }
+  /** Pending action may be zero while firmware is measuring its stop window.
+   * Query the device stopping flag; never replay a rejected motion command. */
+  private async waitForStop(motor:number,epoch:number) {
+    const end=Date.now()+10000;let announced=false;
+    for(;;){
+      if(epoch!==this.motionEpoch)throw Error("运动准备已取消");
+      const device=await this.queue(()=>this.call(0,{kind:"get_state"}));
+      if(!device.device)throw Error("主控停止状态未确认");
+      if(!device.device.stopping){
+        const state=await this.queue(()=>this.call(motor,{kind:"get_state"}));
+        if(epoch!==this.motionEpoch)throw Error("运动准备已取消");
+        return state;
+      }
+      if(!announced){this.report("info",`M${motor} 等待上一次停止/位置保持完成；尚未发送新运动`);announced=true;}
+      if(Date.now()>=end)throw Error("主控停止/位置保持尚未完成，请检查当前状态；未发送新运动");
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+  }
+  /** RTMI channel changes require gate OFF in the current firmware. Finish an
+   * existing stop, then disable stationary holding without cutting logic power. */
+  async configureRtmi(motor:number,cmd:MotorCommand){
+    await this.open(motor);const epoch=this.motionEpoch;
+    const state=await this.waitForStop(motor,epoch);
+    if(state.motor?.motion_active)throw Error("电机正在运行，请先停止运行，再开始、停止或修改遥测采集");
+    if(state.motor?.fault)throw Error(`M${motor} 当前故障=${state.motor.fault}，不能修改遥测配置`);
+    if(state.motor?.drive===2){
+      this.report("info",`M${motor} 遥测配置：先退出静止保持并禁能PWM，逻辑电源与标定/找零记录保持`);
+      await this.command(motor,{kind:"stop",after:2});
+    }
+    // A completed previous task's last_error is not a failed NEW RTMI request.
+    // If already idle, submit the new request (MCU validates and resets its
+    // operation result). Only wait here for an actual transition in progress.
+    if(state.motor?.drive!==0||state.pending||state.motor.pending_action)
+      await this.wait(motor,10000,r=>r.motor?.drive===0&&!r.motor.motion_active);
+    if(epoch!==this.motionEpoch)throw Error("遥测配置已取消");
+    return this.command(motor,cmd);
   }
   async enable(motor: number) {
     await this.command(motor, { kind: "drive_enable" });
@@ -202,7 +237,8 @@ export class SemanticMotion {
   private async prepareTask(motor:number, mode:number, speed:number, epoch:number) {
     if(!Number.isInteger(mode)||mode<0||mode>3||!Number.isInteger(speed)||speed<=0||speed>0x7ffffff)
       throw Error("运动模式或本次转速无效");
-    let state=await this.command(motor,{kind:"get_state"});
+    await this.open(motor);
+    let state=await this.waitForStop(motor,epoch);
     const old=this.prepared;
     if(old?.motor===motor&&old.mode===mode&&old.speed===speed&&old.boot===state.boot_id&&
        state.motor?.mode===mode&&state.motor.limits_valid&&state.motor.config_verified)return;
@@ -212,7 +248,7 @@ export class SemanticMotion {
       await this.wait(motor,10000,r=>r.motor?.drive===0&&!r.motor.motion_active);
     }
     await this.wait(motor,10000,r=>r.motor?.drive===0&&!r.motor.motion_active&&
-      !!r.motor.feedback_fresh&&Math.abs(r.motor.velocity_raw)<=8192&&r.motor.pending_action===0);
+      !!r.motor.feedback_fresh&&r.motor.pending_action===0);
     if(epoch!==this.motionEpoch)throw Error("运动准备已取消");
     // MCU stages mode + speed together, validates saved ceilings, and performs
     // checked RMW. This avoids transient failure against the old task speed.

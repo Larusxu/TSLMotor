@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { HAS_TAURI } from "./api";
 
 /** Mechanism sign, shared by homing, goals and feedback. Wire protocol is unchanged. */
 export const MECHANISM_SIGN = -1;
@@ -29,7 +28,6 @@ export interface ControlCommand {
   target: number; b: number; amplitude: number; period_s: number; cycles: number; rpm: number;
 }
 async function real<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (!HAS_TAURI) throw new Error("此功能需要桌面通信后端；浏览器预览不会连接或模拟电机");
   return invoke<T>(command, args);
 }
 export const controlApi = {
