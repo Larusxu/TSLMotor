@@ -242,7 +242,7 @@ function LegacyHomingPage() {
   };
 
   const start = async () => {
-    if (!configurable || !app.armed || !safety || busy || invalid || pending) return;
+    if (!configurable || !safety || busy || invalid || pending) return;
     const motor = app.motor;
     const stillSelected = () => {
       if (selectedMotor.current !== motor) throw new Error("电机已切换，请重新确认参数与方向");
@@ -410,15 +410,7 @@ function LegacyHomingPage() {
               />
             </Field>
           </div>
-          {invalid ? (
-            <Notice tone="warn">{invalid}</Notice>
-          ) : (
-            <div className="tiny muted">
-              参数存在主控内存里（掉电不保存，上电回固件默认值）；点「写入配置」后会用 op 16 回读逐字段校验。
-              找零进行中主控拒收参数。此处不写 PID；对齐成功不代表速度环、位置环已配置。
-              M9 实测速度 P=500/I=250、位置 P=500/I=0，机构负向（协议+1）、连续推进。
-            </div>
-          )}
+          {invalid && <Notice tone="warn">{invalid}</Notice>}
         </Card>
 
         <Card title="找零控制" sub="HOMING · HARD-STOP" right={<Badge tone="neutral">主控执行</Badge>}>
@@ -440,9 +432,6 @@ function LegacyHomingPage() {
               <NumField value={stepDeg} onChange={setStepDeg} min={1} max={60} step={1} unit="°" />
             </Field>}
           </div>
-          <div className="tiny muted" style={{ marginTop: 8 }}>
-            位置直通：直接更新芯片位置目标，不使用五次轨迹。双端找零固定先机构负端、再正端，各端接触后退开确认；只有两端都有效才完成。正向/负向选项保留单端调试，不能代替完整双端行程。
-          </div>
           <div className="divider" />
           <Check checked={safety} onChange={setSafety}>
             我已确认行程内无人员、无异物，且找零方向指向正确的限位端
@@ -451,7 +440,7 @@ function LegacyHomingPage() {
             <Button
               variant="primary"
               icon={<Icon.Target width={14} height={14} />}
-              disabled={!app.connected || !app.armed || app.mode === "direct" || !safety || running || busy || app.jobRunning || app.motionActive || pending || !!invalid}
+              disabled={!app.connected || app.mode === "direct" || !safety || running || busy || app.jobRunning || app.motionActive || pending || !!invalid}
               onClick={() => void start()}
             >
               开始找零
@@ -460,9 +449,7 @@ function LegacyHomingPage() {
               取消找零
             </Button>
             {app.mode === "direct" && <span className="tiny muted">需切到主控模式（485 / CAN）</span>}
-            {app.connected && app.mode !== "direct" && !app.armed && (
-              <span className="tiny muted">需解锁 ARM</span>
-            )}
+
             {!app.connected && <span className="tiny muted">串口未连接</span>}
             {pending && <span className="tiny muted">请先写入找零配置并回读确认</span>}
             {running && <span className="tiny muted">找零进行中，参数暂不可写</span>}

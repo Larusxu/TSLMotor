@@ -389,7 +389,7 @@ function DirectTuningPage() {
               <Button
                 variant="primary"
                 icon={<Icon.Save width={14} height={14} />}
-                disabled={!app.connected || !app.armed || !confirm || app.jobRunning || app.motionActive}
+                disabled={!app.connected || !confirm || app.jobRunning || app.motionActive}
                 onClick={() => void app.runJob("pid", payload)}
               >
                 应用参数
@@ -410,7 +410,7 @@ function DirectTuningPage() {
               >载入 M9 找零参数</Button>}
               <Button
                 variant="ghost"
-                disabled={!app.armed}
+                disabled={!app.connected}
                 onClick={() => {
                   setCurP(p.pid.curP); setFluxP(p.pid.curP);
                   setCurI(p.pid.curI); setFluxI(p.pid.curI);
@@ -436,7 +436,7 @@ function DirectTuningPage() {
               </Button>
               <Button
                 variant="ghost"
-                disabled={!app.armed}
+                disabled={!app.connected}
                 onClick={() => {
                   setCurP(p.bench.p); setFluxP(p.bench.p);
                   setCurI(p.bench.i); setFluxI(p.bench.i);
@@ -569,7 +569,7 @@ function DirectTuningPage() {
               <Button
                 variant="primary"
                 icon={<Icon.Bolt width={14} height={14} />}
-                disabled={!app.connected || !app.armed || !stepSafety || app.jobRunning}
+                disabled={!app.connected || !stepSafety || app.jobRunning}
                 onClick={() => {
                   setStep(null);
                   void app.runJob("step", { cfg: stepCfg, frameBits: 14 });

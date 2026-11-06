@@ -215,7 +215,7 @@ export default function SequencePage() {
                 variant="primary"
                 icon={<Icon.Sequence width={14} height={14} />}
                 disabled={
-                  !app.connected || !app.armed || !safety || !serial.trim() || app.jobRunning || !steps.length
+                  !app.connected || !safety || !serial.trim() || app.jobRunning || !steps.length
                 }
                 onClick={() => void app.runJob("sequence", cfg)}
               >

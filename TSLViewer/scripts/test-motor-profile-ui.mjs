@@ -41,14 +41,14 @@ assert(Math.abs(recovered.decel_deg_s2-12000)<10);
 assert.equal(m.word(configured,120),m.crc32(configured.slice(0,120)));
 assert.throws(()=>m.profileWithRun(base,p,{...task,over_ms:30},9));
 assert.throws(()=>m.profileWithRun(base,p,{...task,comm_timeout_ms:100},9));
-assert.throws(()=>m.profileWithRun(base,p,{...task,mode:'velocity_ramp'},9));
+assert.doesNotThrow(()=>m.profileWithRun(base,p,{...task,mode:'velocity_ramp'},9));
 console.log('PASS RUN1: one current/velocity ceiling, PI/Id/offset binding preserved, acceleration conversion, constraints, CRC and mode defaults');
 
 const piOnly=m.profileWithPiOnly(configured,{...p,torque_p:66,torque_limit_ma:900,vel_limit_rpm:1234},9);
 assert.equal(m.word(piOnly,36)>>>16,66);
 assert.deepEqual(piOnly.slice(48,120),configured.slice(48,120),'PI commit preserves saved limits/RUN1');
 const controlOnly=m.profileWithControlOnly(configured,{...p,torque_p:99,torque_limit_ma:450,flux_limit_ma:100,uq_ud_limit:12000},task,9);
-assert.equal(m.word(controlOnly,36),m.word(configured,36),'Control commit ignores unapplied PI gain');
+assert.equal(m.word(controlOnly,36)>>>16,99,'Control commit uses current PID page PI rather than stale W25');
 assert.equal(m.word(controlOnly,48),m.word(configured,48),'Left commit ignores unapplied Iq/Id');
 assert.equal(m.word(controlOnly,56),m.word(configured,56),'Left commit ignores unapplied voltage');
 const maximum=m.profileWithPid(base,{...p,torque_limit_ma:1050},9);
@@ -58,7 +58,7 @@ console.log('PASS independent PI/control commits, conservative current quantizat
 
 const edited={...p,torque_limit_ma:450,flux_limit_ma:100,uq_ud_limit:12000,vel_limit_rpm:1500,torque_p:99};
 const left=m.profileWithControlOnly(configured,edited,{...task,accel_deg_s2:18000},9);
-for(const [a,b] of [[0,52],[56,60],[64,68],[124,128]])assert.deepEqual(left.slice(a,b),configured.slice(a,b),'Left owns only velocity and RUN1');
+for(const [a,b] of [[0,28],[48,52],[56,60],[64,68],[124,128]])assert.deepEqual(left.slice(a,b),configured.slice(a,b),'Left preserves saved constraints and identity');
 assert.equal(m.word(left,52),m.word(left,60));
 assert.equal(m.word(left,112),Math.floor(task.max_rpm*m.COUNTS_PER_RPM));
 assert.notEqual(m.word(left,72),m.word(configured,72));

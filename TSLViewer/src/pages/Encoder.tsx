@@ -315,7 +315,7 @@ function DirectEncoderPage() {
               <Button
                 variant="primary"
                 icon={<Icon.Save width={14} height={14} />}
-                disabled={!app.connected || !app.armed || !confirmWrite || app.jobRunning}
+                disabled={!app.connected || !confirmWrite || app.jobRunning}
                 onClick={() => void app.runJob("encoder", payload)}
               >
                 写入编码器配置
@@ -323,7 +323,7 @@ function DirectEncoderPage() {
               <Button variant="ghost" disabled={!app.connected || app.jobRunning} onClick={() => void readLive()}>
                 刷新回读
               </Button>
-              {!app.armed && <span className="tiny muted">需解锁 ARM</span>}
+
             </div>
           </div>
         </Card>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app-store";
@@ -15,8 +15,8 @@ import {
   NumField,
 } from "../components/ui";
 import { countsFromMa, fmt } from "../lib/units";
-import { semanticCommission, alignmentRetreatDegrees } from "../lib/semantic-commission";
-import { semanticFresh } from "../lib/semantic-state";
+import { semanticCommission } from "../lib/semantic-commission";
+import { semanticFresh, readEncoderSnapshot } from "../lib/semantic-state";
 import { semanticMotion } from "../lib/semantic-motion";
 import type { CalibCfgPayload, CalibResult } from "../lib/types";
 
@@ -39,28 +39,35 @@ export function AlignmentPanels({ onCompleted }: { onCompleted?: () => Promise<v
   const [endDeg, setEndDeg] = useState(720);
   const [writeBack, setWriteBack] = useState(true);
   const [dryRun, setDryRun] = useState(false);
-  const [safety, setSafety] = useState(false);
   const result = app.mode === "direct" ? app.alignment : null;
   const [rpm, setRpm] = useState(100);
   const [runSafety, setRunSafety] = useState(false);
-  const [clearance, setClearance] = useState(true);
   const [commissionBusy, setCommissionBusy] = useState(false);
   const [commissionNote, setCommissionNote] = useState("");
   const [verifiedOffset, setVerifiedOffset] = useState<number | null>(null);
   const mainboard = app.mode === "main485" || app.mode === "maincan";
   const state = app.connected && app.semantic.motor === app.motor && semanticFresh(app.semantic) ? app.semantic.state : null;
+  useEffect(()=>{setVerifiedOffset(null);},[app.connected,app.motor,app.semantic.bootId]);
+  useEffect(()=>{
+    if(state&&!state.align_valid)setVerifiedOffset(null);
+    if(!mainboard||!app.connected||!state?.config_verified||!state.align_valid||state.motion_active)return;
+    let alive=true;
+    void readEncoderSnapshot(app.motor).then(r=>{
+      if(alive&&r.boot_id===app.semantic.bootId&&r.encoder?.[1])setVerifiedOffset(r.encoder[4]&65535);
+    }).catch(()=>{});
+    return()=>{alive=false;};
+  },[mainboard,app.connected,app.motor,app.semantic.bootId,state?.config_verified,state?.align_valid,state?.motion_active]);
   const alignmentState = !state ? "未确认或已过期" : state.drive === 1 ? "主控执行中" : state.align_valid ? "主控已验证" : "本次未验证";
-  const retreat = alignmentRetreatDegrees(endDeg, poles);
   const startAlignment = async () => {
     if (!mainboard) { await app.runJob("calibrate", { cfg, frameBits: 14 }); return; }
     if (dryRun || !writeBack) throw new Error("主控标定会验证并保存 W25 档案；请关闭干跑并勾选自动写回");
     if (poles !== app.cal.poles) throw new Error("极对数须先保存并由主控读回验证");
-    setCommissionBusy(true); setCommissionNote("主控已接管：检查限位、必要时反向回退，再进行标定");
+    setCommissionBusy(true); setCommissionNote("主控已接管：执行标定扫描");
     try {
       await app.stopStream();
       await semanticCommission.align(app.motor, { scanDegrees: endDeg, stepDegrees: stepDeg,
-        settleMs: settle, currentMa: fluxMa, clearance }, r => {
-          if (r.motor) setCommissionNote(r.motor.drive === 1 ? "主控执行中：预检查 / 回退 / 扫描 / 读回" : "主控正在确认标定结果");
+        settleMs: settle, currentMa: fluxMa }, r => {
+          if (r.motor) setCommissionNote(r.motor.drive === 1 ? "主控执行中：扫描 / 读回" : "主控正在确认标定结果");
         });
       await semanticMotion.permit(app.motor,false);
       const readback = await semanticMotion.command(app.motor,{kind:"encoder_state"});
@@ -92,7 +99,7 @@ export function AlignmentPanels({ onCompleted }: { onCompleted?: () => Promise<v
       <div className="col-stack">
         <Card title="电角度对齐" sub="PHI_E ALIGNMENT" right={<Badge tone={mainboard ? state?.align_valid ? "ok" : "neutral" : app.jobRunning ? "accent" : "neutral"}>{mainboard ? alignmentState : app.jobRunning ? "执行中" : "空闲"}</Badge>}>
           <div className="stack" style={{ gap: 12 }}>
-            <div className="grid cols-4" style={{ gap: 10 }}>
+            <div className="grid align-inputs" style={{ gap: 10 }}>
               <Field label="对齐电流" hint={`${fluxCounts} counts`}>
                 <NumField value={fluxMa} onChange={setFluxMa} min={50} max={1600} step={10} unit="mA" />
               </Field>
@@ -105,39 +112,20 @@ export function AlignmentPanels({ onCompleted }: { onCompleted?: () => Promise<v
               <Field label="步进电角度" hint="电角度">
                 <NumField value={stepDeg} onChange={setStepDeg} min={15} max={180} step={15} unit="°" />
               </Field>
-            </div>
-
-            <div className="row" style={{ gap: 10, alignItems: "flex-end" }}>
               <Field label="扫描上限" hint="覆盖 2 个电周期">
                 <NumField value={endDeg} onChange={setEndDeg} min={360} max={1080} step={90} unit="°" />
               </Field>
-              <div className="grow" />
-              <Check checked={writeBack} onChange={setWriteBack}>
-                {mainboard ? "主控验证并保存 W25" : "自动写回 0x242"}
-              </Check>
-              <Check checked={dryRun} onChange={setDryRun}>
-                干跑（不扫描）
-              </Check>
             </div>
-
-            {overLimit && (
-              <Notice tone="danger">
-                对齐电流 {fluxMa} mA 超过 4× 增益满量程（1.65 A）。请降低电流或把 CSA 改为 1×。
-              </Notice>
-            )}
-
-            <div className="divider" />
-            <Check checked={clearance} onChange={setClearance}>标定前检查机械限位，接触时自动反向回退</Check>
-            <Notice tone="warn">{mainboard ? `预检查由主控执行，使用已验证的电角度档案。${endDeg}° 电角扫描对应回退 ${retreat}° 机械角；遇到另一端阻挡立即停止，不反复换向。首次空白标定没有有效偏移时不执行闭环回退。` : "自动限位预检查仅支持经主控的 485/CAN 模式；直连模式请先手动移到行程中段。"}</Notice>
-            {commissionNote && <Notice tone={commissionBusy ? "warn" : "neutral"}>{commissionNote}</Notice>}
-            <Check checked={safety} onChange={setSafety}>
-              我已确认电机固定、联轴器锁紧、电源限流
-            </Check>
+            {overLimit && <Notice tone="danger">对齐电流超过 1.65 A 满量程，请降低电流或修改 CSA 增益。</Notice>}
+            <div className="align-footer"><div className="row-wrap" style={{gap:16}}>
+              <Check checked={writeBack} onChange={setWriteBack}>{mainboard ? "主控验证并保存 W25" : "自动写回"}</Check>
+              <Check checked={dryRun} onChange={setDryRun}>干跑（不扫描）</Check>
+            </div>
             <div className="row" style={{ gap: 8 }}>
               <Button
                 variant="primary"
                 icon={<Icon.Align width={14} height={14} />}
-                disabled={!app.connected || !app.armed || !safety || app.jobRunning || commissionBusy || (mainboard && fluxMa > 500)}
+                disabled={!app.connected || app.jobRunning || commissionBusy || (mainboard && fluxMa > 500)}
                 onClick={() => {
                   void startAlignment().catch(e => app.toast("error", String(e)));
                 }}
@@ -152,8 +140,9 @@ export function AlignmentPanels({ onCompleted }: { onCompleted?: () => Promise<v
               >
                 取消
               </Button>
-              {!app.armed && <span className="tiny muted">需解锁 ARM</span>}
-            </div>
+
+            </div></div>
+            {commissionNote && <Notice tone={commissionBusy ? "warn" : "neutral"}>{commissionNote}</Notice>}
           </div>
         </Card>
         </div>
@@ -269,7 +258,7 @@ export function AlignmentPanels({ onCompleted }: { onCompleted?: () => Promise<v
               <Button
                 variant="primary"
                 icon={<Icon.Bolt width={14} height={14} />}
-                disabled={!app.connected || !app.armed || !runSafety}
+                disabled={!app.connected || !runSafety}
                 onClick={async () => {
                   try {
                     await api.setVelocity(rpm, app.cal.poles, app.cal.countsPerRpm);

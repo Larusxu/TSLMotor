@@ -1,8 +1,8 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "./api";
 import type { SemanticReply } from "./semantic-state";
 
 export type MotorCommand = { kind: string; [key: string]: unknown };
-class CommandRejected extends Error {
+export class CommandRejected extends Error {
   constructor(readonly reply: SemanticReply) {
     super(`主控 ${reply.result_name}，结果码 ${reply.result}；fault=${reply.motor?.fault ?? "?"}, error=${reply.motor?.last_error ?? "?"}, mode=${reply.motor?.mode ?? "?"}, pending=${reply.motor?.pending_action ?? "?"}；请读取当前状态后处理`);
   }
@@ -20,6 +20,7 @@ export class SemanticMotion {
   private chain: Promise<unknown> = Promise.resolve();
   private permitWanted = false;
   private heldJog = false;
+  private jogStopAfter = 1;
   private jogGeneration = 0;
   private motionEpoch = 0;
   private task = 0;
@@ -39,6 +40,8 @@ export class SemanticMotion {
   private errors = new Set<(error: string) => void>();
   subscribeErrors(fn: (error: string) => void) { this.errors.add(fn); return () => { this.errors.delete(fn); }; }
   owned() { return this.session !== 0; }
+  /** Controller status within the current motor session, without switching it. */
+  deviceState() { return this.queue(()=>this.call(0,{kind:"get_state"})); }
   subscribe(fn: (r: SemanticReply, motor: number) => void) {
     this.observers.add(fn); return () => { this.observers.delete(fn); };
   }
@@ -52,7 +55,7 @@ export class SemanticMotion {
     if (detailed) this.log("info", `${context} 发送 ${JSON.stringify(command)}`);
     try {
     const sentAt = Date.now();
-    const r = await invoke<SemanticReply>("motor_semantic", { motor, request: {
+    const r = await invokeCommand<SemanticReply>("motor_semantic", { motor, request: {
       request_id: id, boot_id: this.boot, session_id: this.session, task_id: this.task, command,
     } });
     if (command.kind === "position_state" && r.result === 14 && r.request_id === id &&
@@ -69,12 +72,12 @@ export class SemanticMotion {
     }
     if (command.kind === "pulse" || command.kind === "open") this.pulseAt = sentAt;
     if (command.kind === "permit" && command.enabled) this.permitAt = sentAt;
-    if (command.kind === "jog_start" || command.kind === "velocity_start" || command.kind === "jog_renew") this.jogAt = sentAt;
+    if (command.kind === "jog_start" || command.kind === "velocity_start" || command.kind === "open_loop_start" || command.kind === "jog_renew") this.jogAt = sentAt;
     if (motor) this.task = r.task_id;
     if (detailed) this.log("ok", `${context} ${r.result_name}(${r.result}) ${Date.now()-sentAt}ms pending=${r.pending} drive=${r.motor?.drive ?? "-"} fault=${r.motor?.fault ?? "-"} error=${r.motor?.last_error ?? "-"}`);
     this.observers.forEach(fn => fn(r, motor));
     return r;
-    } catch (error) { this.log(String(error).includes("到达行程限位")?"warn":"error", `${context} ${String(error)}`); if(!String(error).includes("到达行程限位"))this.errors.forEach(fn => fn(String(error))); throw error; }
+    } catch (error) { if(error instanceof SessionLost)throw error;this.log(String(error).includes("到达行程限位")?"warn":"error", `${context} ${String(error)}`); if(!String(error).includes("到达行程限位"))this.errors.forEach(fn => fn(String(error))); throw error; }
   }
   async open(motor: number) {
     return this.queue(async () => {
@@ -112,7 +115,7 @@ export class SemanticMotion {
         if (this.heldJog) {
           if (Date.now() - this.jogAt >= 550) {
             ++this.jogGeneration; this.heldJog = false;
-            await this.call(this.motor, { kind: "stop", after: 1 });
+            await this.call(this.motor, { kind: "stop", after: this.jogStopAfter });
             this.errors.forEach(fn => fn("点动续期超时，已停止；请松开后重新按住"));
           } else {
             try { await this.call(this.motor, { kind: "jog_renew" }); }
@@ -141,20 +144,33 @@ export class SemanticMotion {
       // renewals are retried on the next tick; motion commands are never replayed.
     } finally { this.pulseBusy = false; }
   }
-  async command(motor: number, cmd: MotorCommand) {
+  async command(motor: number, cmd: MotorCommand, current:()=>boolean=()=>true) {
     const epoch=this.motionEpoch;
-    if(["mode","limits","apply_configuration","commission","clear_fault"].includes(cmd.kind))this.prepared=null;
+    if(["mode","limits","apply_configuration","commission","encoder_config","clear_fault"].includes(cmd.kind))this.prepared=null;
+    if(!current())throw Error("运动请求已取消");
     await this.open(motor);
     if (["jog_start","velocity_start","logical_move","logical_work","move","work"].includes(cmd.kind)) {
       let state=await this.waitForStop(motor,epoch);
       if(epoch!==this.motionEpoch)throw Error("运动准备已取消");
+      if(!current())throw Error("运动请求已取消");
       if(state.motor?.drive===0)await this.enable(motor);
     }
-    return this.queue(() => {
-      if(["jog_start","velocity_start","logical_move","logical_work","move","work"].includes(cmd.kind)&&epoch!==this.motionEpoch)
-        throw Error("运动请求已被停止操作取消");
-      return this.call(motor,cmd);
-    });
+    try {
+      return await this.queue(() => {
+        if(!current())throw Error("运动请求已取消");
+        if(["jog_start","velocity_start","logical_move","logical_work","move","work"].includes(cmd.kind)&&epoch!==this.motionEpoch)
+          throw Error("运动请求已被停止操作取消");
+        return this.call(motor,cmd);
+      });
+    }catch(error){
+      // Reconnect observations after a reboot; never replay a motion/write.
+      if(!(error instanceof SessionLost)||!["get_state","position_state","encoder_state","ident_state"].includes(cmd.kind))throw error;
+      ++this.motionEpoch;++this.jogGeneration;this.heldJog=this.permitWanted=false;
+      if(this.timer)clearInterval(this.timer);this.timer=null;
+      this.session=0;this.boot="0";this.motor=this.task=0;this.prepared=null;
+      await this.open(motor);
+      return this.queue(()=>this.call(motor,cmd));
+    }
   }
   async permit(motor: number, enabled: boolean) {
     this.permitWanted = false;
@@ -163,8 +179,19 @@ export class SemanticMotion {
     this.permitWanted = enabled && !!r.motor?.permit; return r;
   }
   async initialize(motor: number) {
+    const current=await this.command(motor,{kind:"get_state"});
+    if(current.motor?.logic_power&&current.motor.config_verified&&current.motor.limits_valid&&!current.pending)return current;
     await this.command(motor, { kind: "commission", action: 1 });
     return this.wait(motor, 15000, r => !!r.motor?.config_verified && !!r.motor.limits_valid);
+  }
+  async powerOff(motor:number){
+    await this.stop(motor,true);
+    await this.wait(motor,15000,r=>r.motor?.drive===0&&!r.motor.motion_active);
+    await this.permit(motor,false);
+    await invokeCommand<number[]>("main_control",{motor,op:5,data:[0]});
+    const actual=await invokeCommand<number[]>("main_control",{motor,op:4,data:[]});
+    if(actual.length!==10||!actual[7]||actual[2]<1||actual[2]>4||(actual[9]&(1<<(actual[2]-1))))throw Error("逻辑电源关闭尚未确认");
+    await this.close();
   }
   async clearFault(motor:number) {
     this.permitWanted=this.heldJog=false;
@@ -181,12 +208,12 @@ export class SemanticMotion {
       if(Date.now()>=end)throw Error("故障恢复超时，未自动使能或重试");
     }
   }
-  async wait(motor: number, timeout: number, accept: (r: SemanticReply) => boolean) {
+  async wait(motor: number, timeout: number, accept: (r: SemanticReply) => boolean, completedResults: number[] = []) {
     const end = Date.now() + timeout;
     for (;;) {
       await new Promise(resolve => setTimeout(resolve, 100));
       const r = await this.command(motor, { kind: "get_state" });
-      if (r.motor?.fault || (r.motor?.last_error && r.motor.last_error!==15)) throw Error(`M${motor} 主控任务失败 fault=${r.motor.fault}, error=${r.motor.last_error}${r.motor.last_error===13 ? "（设备读写失败，请确认电机编号、连接和供电）" : ""}`);
+      if (r.motor?.fault || (r.motor?.last_error && r.motor.last_error!==15 && !completedResults.includes(r.motor.last_error))) throw Error(`M${motor} 主控任务失败 fault=${r.motor.fault}, error=${r.motor.last_error}${r.motor.last_error===13 ? "（设备读写失败，请确认电机编号、连接和供电）" : ""}`);
       if (!r.pending && r.motor?.drive !== 1 && !r.motor?.pending_action && accept(r)) return r;
       if (Date.now() >= end) throw Error("主控任务等待超时；未自动重发，请读取当前状态");
     }
@@ -257,28 +284,45 @@ export class SemanticMotion {
     if(epoch!==this.motionEpoch)throw Error("运动准备已取消");
     this.prepared={motor,mode,speed,boot:state.boot_id};
   }
-  async taskCommand(motor:number,mode:number,speed:number,cmd:MotorCommand) {
+  async taskCommand(motor:number,mode:number,speed:number,cmd:MotorCommand,current:()=>boolean=()=>true) {
     const epoch=this.motionEpoch;
     const perform=async()=>{
-      if(epoch!==this.motionEpoch)throw Error("运动请求已取消");
+      if(epoch!==this.motionEpoch||!current())throw Error("运动请求已取消");
       await this.prepareTask(motor,mode,speed,epoch);
-      if(epoch!==this.motionEpoch)throw Error("运动请求已取消");
-      return this.command(motor,cmd);
+      if(epoch!==this.motionEpoch||!current())throw Error("运动请求已取消");
+      return this.command(motor,cmd,current);
     };
     const next=this.taskChain.then(perform,perform);this.taskChain=next.catch(()=>undefined);return next;
   }
-  async jog(motor: number, velocity: number, mode: number) {
-    const generation = ++this.jogGeneration;
-    const r = await this.taskCommand(motor,mode,Math.abs(velocity),{ kind: "jog_start", velocity_raw: velocity, lease_ms: 700 });
-    this.heldJog = generation === this.jogGeneration;
-    this.heldTask = r.task_id; return r;
+  async jog(motor: number, velocity: number) {
+    return this.startOpenLoopJog(motor,velocity,true);
   }
   async velocity(motor:number,velocity:number,mode:number) {
+    this.jogStopAfter = 1;
     if(mode<2||mode>3)throw Error("速度任务需要速度模式");
     const generation=++this.jogGeneration;
     const r=await this.taskCommand(motor,mode,Math.abs(velocity),{kind:"velocity_start",velocity_raw:velocity,lease_ms:700});
     this.heldJog=generation===this.jogGeneration;
     this.heldTask=r.task_id;return r;
+  }
+  async openLoopJog(motor:number,velocity:number) {
+    return this.startOpenLoopJog(motor,velocity,false);
+  }
+  private async startOpenLoopJog(motor:number,velocity:number,bounded:boolean) {
+    this.jogStopAfter = 2;
+    const generation=++this.jogGeneration,epoch=this.motionEpoch;
+    const perform=async()=>{
+      await this.initialize(motor);
+      await this.waitForStop(motor,epoch);
+      await this.wait(motor,5000,r=>!!r.motor?.config_verified&&!!r.motor.limits_valid&&!!r.motor.feedback_fresh);
+      if(epoch!==this.motionEpoch)throw Error("开环点动已取消");
+      this.prepared=null; // The temporary commutation mode is never a profile.
+      const r=await this.command(motor,{kind:bounded?"jog_start":"open_loop_start",velocity_raw:velocity,lease_ms:700});
+      this.heldJog=generation===this.jogGeneration;this.heldTask=r.task_id;
+      return r;
+    };
+    const next=this.taskChain.then(perform,perform);this.taskChain=next.catch(()=>undefined);
+    return next;
   }
   async stop(motor: number, disable = false) {
     ++this.motionEpoch; ++this.jogGeneration; this.heldJog = false;

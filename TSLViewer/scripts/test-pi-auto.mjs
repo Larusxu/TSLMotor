@@ -30,7 +30,7 @@ assert.match(travelError,/10组.*±360.00°/);
 assert.match(travelError,/相对本次采集起点/);
 assert.match(travelError,/不是电流超限/);
 assert.equal(policy.captureFailure({loop:1,error:1},497,65536),'TMC读写失败');
-assert.equal(policy.captureFailure({loop:1,error:4},497,65536),'电流或芯片故障');
+assert.match(policy.captureFailure({loop:1,error:4},497,65536),/旧固件.*单点判定/);
 const original=[0x400030,0x410031,0x2ee0005,0xc80000],same=80*65536+20;
 for(const loop of [0,1]){
  assert.deepEqual(m.trialCoefficients(original,loop,80,20,true),[same,same,original[2],original[3]]);
@@ -105,3 +105,27 @@ if(process.argv[2]){
  for(const path of process.argv.slice(3)){try{console.log(path,quality.compareResponse(base,load(path)));}catch(e){console.log(path,String(e));}}
  assert.throws(()=>quality.compareResponse(base,{...base,pidConfig:base.pidConfig+1}));
 }
+
+assert.equal(policy.resolveCaptureTravel(655360,true,{coordinate_valid:true,position:'5000000',negative_contact:'0',positive_contact:'10000000',margin_counts:1000}),3999200);
+assert.equal(policy.resolveCaptureTravel(655360,false,{coordinate_valid:true}),655360);
+assert.equal(policy.resolveCaptureTravel(655360,true,{coordinate_valid:false}),655360);
+assert.throws(()=>policy.resolveCaptureTravel(10,true,{coordinate_valid:true,position:'0',negative_contact:'0',positive_contact:'100'}),/中段/);
+const diag=new Uint8Array(96),dv=new DataView(diag.buffer);
+dv.setUint32(48,0xfffffffe,true);dv.setUint32(64,0x31444950,true);dv.setUint32(68,1<<25,true);dv.setInt32(76,-123,true);
+assert.equal(m.decodeCaptureDiagnostic([...diag]).delta,-123);
+assert.match(policy.diagnosticText({loop:1,diagnostic:m.decodeCaptureDiagnostic([...diag])}),/削顶（警告）/);
+assert.equal(m.decodeCaptureDiagnostic([...diag.slice(0,64)]),undefined);
+
+const homed={coordinate_valid:true,position:'-500000',negative_contact:'-1000000',positive_contact:'0',margin_counts:1000};
+for(const [range,counts] of [[[20,80],299000],[[30,70],199000],[[40,60],99000]])assert.equal(policy.percentCaptureTravel(range,homed),counts);
+assert.throws(()=>policy.percentCaptureTravel([40,60],{...homed,position:'-700000'}),/中点/);
+assert.throws(()=>policy.percentCaptureTravel([40,60],{...homed,coordinate_valid:false}),/找零/);
+assert.throws(()=>policy.percentCaptureTravel([0,100],homed),/有效/);
+console.log('PASS percentage-only homed travel windows, signed coordinates and endpoint exclusion');
+const page=new Uint8Array(96),pd=new DataView(page.buffer),terminal={state:2,motor:9,loop:1,generation:7,count:10};
+page.set([2,2,9,1]);pd.setUint32(4,7,true);pd.setUint32(8,10,true);pd.setUint32(12,5,true);
+for(let i=0;i<5;i++){pd.setUint32(16+i*16,100+i,true);pd.setInt32(20+i*16,-123,true);}
+const denseDecoded=m.decodeCapturePage([...page],terminal);assert.equal(denseDecoded.cursor,5);assert.equal(denseDecoded.samples.length,5);assert.equal(denseDecoded.samples[4].reference,-123);
+assert.throws(()=>m.decodeCapturePage([...page],{...terminal,generation:8}),/身份/);
+assert.throws(()=>m.decodeCapturePage([...page.slice(0,95)],terminal),/长度/);
+console.log('PASS dense page identity, signed sample decoding and malformed page rejection');

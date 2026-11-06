@@ -284,7 +284,7 @@ export default function LoopTestPage() {
   }, [app.connected, st.phase, engine]);
 
   const busy = st.phase !== "idle";
-  const canRun = app.connected && app.armed && safety;
+  const canRun = app.connected && safety;
 
   const begin = (label: string, chan0: "pos" | "rpm" | "iq" = "rpm") => {
     stepIdx.current = 0;
@@ -393,7 +393,7 @@ export default function LoopTestPage() {
       </div>
 
       <Notice tone="warn">
-        先完成<b>机械找零</b>再测：本页位置坐标与「机械行程」页共用同一个零点，未找零时所有位置类结论都不可信。
+        先完成<b>机械找零</b>再测：未找零时所有位置类结论都不可信。
         本页所有闭环与限幅都在主控 / TMC6460 里执行，上位机只给给定、盯行程、打分、画波形。
       </Notice>
 
@@ -464,7 +464,7 @@ export default function LoopTestPage() {
                 停止测试
               </Button>
               {!app.connected && <span className="tiny muted">串口未连接</span>}
-              {app.connected && !app.armed && <span className="tiny muted">需解锁 ARM</span>}
+
             </div>
             <div className="tiny muted">
               恒 Iq 不设堵转保护：机构卡死时位置不动、边界永不触发，测试时人必须在场。

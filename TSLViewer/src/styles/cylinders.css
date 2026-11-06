@@ -1,0 +1,37 @@
+.cylinder-page { display: grid; gap: 12px; }
+.cylinder-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding: 4px 2px; color: var(--text-2); font-size: 13px; }
+.cylinder-summary b { font-size: 20px; color: var(--text); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.cylinder-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.cylinder-card { min-width: 0; }
+.cylinder-card.selected { border-color: var(--accent); }
+.cylinder-heading { display: inline-flex; align-items: center; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; min-height: 36px; }
+.cylinder-heading span { color: var(--text-2); font-size: 13px; font-weight: 400; }
+.cylinder-stats { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; padding-bottom: 10px; }
+.cylinder-stats div { display: grid; gap: 8px; }
+.cylinder-stats span { color: var(--text-2); font-size: 12px; }
+.cylinder-stats strong { font-size: 19px; font-weight: 550; font-variant-numeric: tabular-nums; }
+.cylinder-stats small, .cylinder-target small { color: var(--text-2); font-size: 12px; font-weight: 400; }
+.cylinder-fields { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.cylinder-fields .field, .cylinder-fields .input-wrap { min-width: 0; }
+.cylinder-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.cylinder-actions .btn { min-height: 36px; }
+.cylinder-actions > span { color: var(--text-2); font-size: 12px; }
+.cylinder-travel { margin: 12px 0; padding: 10px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.cylinder-target { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.cylinder-target > span { color: var(--text-2); font-size: 12px; }
+.cylinder-target > span:last-child { margin-left: auto; }
+.cylinder-target b { font-variant-numeric: tabular-nums; font-size: 20px; }
+.cylinder-travel input[type=range] { display: block; width: 100%; min-height: 36px; cursor: pointer; accent-color: var(--accent); }
+.cylinder-travel input:disabled { cursor: not-allowed; opacity: .4; }
+.cylinder-scale { display: flex; justify-content: space-between; color: var(--text-3); font-size: 12px; }
+.cylinder-error { color: var(--danger); font-size: 13px; margin-top: 12px; overflow-wrap: anywhere; }
+@media(max-width:1180px) { .cylinder-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media(max-width:760px) { .cylinder-grid { grid-template-columns: minmax(0,1fr); } }
+@media(max-width:550px) { .cylinder-fields { grid-template-columns: minmax(0,1fr); } .cylinder-stats { gap: 8px; } .cylinder-stats strong { font-size: 19px; } }
+
+.cylinder-card > .card-head { padding: 8px 12px 6px; }
+.cylinder-card > .card-body { padding: 0 12px 12px; }
+.cylinder-card .input-wrap input { padding: 6px 8px; font-size: 12px; }
+.cylinder-card .field { gap: 5px; }
+.cylinder-actions .btn { padding: 6px 10px; }
+@media(min-width:1900px) { .cylinder-grid { grid-template-columns: repeat(5,minmax(0,1fr)); } }

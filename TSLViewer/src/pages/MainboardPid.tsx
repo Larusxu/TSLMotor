@@ -11,7 +11,7 @@ export default function MainboardPid() {
   const [busy,setBusy]=useState(false), [note,setNote]=useState(""), [confirmed,setConfirmed]=useState(false);
   const set=(key:keyof PidCfgPayload,v:number)=>{draft.setPid(old=>({...old,[key]:v}));setConfirmed(false);};
   const run=async(fn:()=>Promise<void>)=>{setBusy(true);setNote("");try{await fn();}catch(e){setNote(String(e));}finally{setBusy(false);}};
-  const liveButton=(group:0|1|2)=><div style={{display:"flex",justifyContent:"flex-end",marginTop:"auto",paddingTop:10}}><Button size="sm" disabled={!app.connected||busy} onClick={()=>void run(async()=>{await tuneMotorPi(app.motor,group,p);setNote("TMC 系数已写入并回读；积分器保持，尚未保存 W25。归一化修改请使用底部写入配置。");})}>写入</Button></div>;
+  const liveButton=(group:0|1|2)=><div style={{display:"flex",justifyContent:"flex-end",marginTop:"auto",paddingTop:10}}><Button size="sm" disabled={!app.connected||busy} onClick={()=>void run(async()=>{setNote(await tuneMotorPi(app.motor,group,p));})}>写入</Button></div>;
   const numeric=(key:keyof PidCfgPayload,label:string)=><Field label={label} style={{flex:1}}><NumField value={p[key] as number} onChange={v=>set(key,v)} min={0} max={32767} disabled={busy} width="100%"/></Field>;
   const norm=(key:keyof PidCfgPayload,label:string,labels:string[])=><Field label={label}><SelectField value={p[key] as number} onChange={v=>set(key,Number(v))} options={labels.map((label,value)=>({label,value}))} width="100%" disabled={busy}/></Field>;
   const gain=(pk:keyof PidCfgPayload,ik:keyof PidCfgPayload,np:keyof PidCfgPayload,ni:keyof PidCfgPayload,current=false)=><span className="pid-gain">Kp={coefToGain(p[pk] as number,pFrac(p[np] as number)).toFixed(4)} · Ki={coefToGain(p[ik] as number,iFrac(p[ni] as number,current)).toFixed(4)}</span>;

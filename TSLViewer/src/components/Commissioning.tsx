@@ -14,7 +14,7 @@ export function Commissioning({ config, dir, homing, dualLimit }: { config: Homi
   const { pid } = useMotorConfiguration(app.motor);
   useEffect(() => { setSafe(false); }, [app.motor, dir, config, dualLimit]);
   const start = async () => {
-    if (!safe || !app.armed || app.motionActive || app.jobRunning || homing) return;
+    if (!safe || app.motionActive || app.jobRunning || homing) return;
     await app.stopStream();
     await app.runJob("commission", {
       motor: app.motor, kind, save, home: config,
@@ -45,7 +45,7 @@ export function Commissioning({ config, dir, homing, dualLimit }: { config: Homi
     <Check checked={save} onChange={setSave}>完成后保存电角度与 PID 到电机板 EEPROM（运行零点不落盘）</Check>
     <Check checked={safe} onChange={setSafe}>已确认方向和空间；需要对齐时机构位于行程中段，允许电机端转动约两圈</Check>
     <div className="row-wrap" style={{ gap: 8 }}>
-      <Button variant="primary" disabled={!app.connected || app.mode === "direct" || !app.armed || !safe || app.jobRunning || app.motionActive || homing || flux < 50 || flux > 500}
+      <Button variant="primary" disabled={!app.connected || app.mode === "direct" || !safe || app.jobRunning || app.motionActive || homing || flux < 50 || flux > 500}
         onClick={() => void start().catch(e => app.toast("error", String(e)))}>执行所选流程</Button>
       <Button disabled={!app.jobRunning} onClick={app.cancel}>取消流程</Button>
     </div>

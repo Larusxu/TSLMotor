@@ -163,6 +163,19 @@ export const Icon = {
       <path d="m7.2 11 1.8 1.8M10 8.2l1.8 1.8M12.8 5.4l1.8 1.8" />
     </svg>
   ),
+  Grid: (p: React.SVGProps<SVGSVGElement>) => (
+    <svg {...S(p)}>
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" />
+      <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
+      <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" />
+    </svg>
+  ),
+  List: (p: React.SVGProps<SVGSVGElement>) => (
+    <svg {...S(p)}>
+      <path d="M4 6.5h16M4 12h16M4 17.5h16" />
+    </svg>
+  ),
 };
 
 /* ------------------------------------------------------------------ atoms */
@@ -231,6 +244,7 @@ export function NumField({
   label,
   readOnly,
   clampOnCommit = true,
+  onCommit,
 }: {
   value: number | string;
   onChange: (v: number) => void;
@@ -246,9 +260,11 @@ export function NumField({
   readOnly?: boolean;
   /** Keep configuration edits visible; validation can reject instead of silently clamping. */
   clampOnCommit?: boolean;
+  onCommit?: (value:number)=>void;
 }) {
   const [text, setText] = useState(String(value));
   const [focus, setFocus] = useState(false);
+  const focusValue=useRef(value);
   useEffect(() => {
     if (!focus) setText(String(value));
   }, [value, focus]);
@@ -262,6 +278,7 @@ export function NumField({
       if (clampOnCommit && max !== undefined) v = Math.min(max, v);
       onChange(v);
       setText(String(v));
+      if(onCommit && v!==Number(focusValue.current)){focusValue.current=v;onCommit(v);}
     } else {
       setText(String(value));
     }
@@ -277,7 +294,7 @@ export function NumField({
         placeholder={placeholder}
         aria-label={label}
         readOnly={readOnly}
-        onFocus={() => setFocus(true)}
+        onFocus={() => {focusValue.current=value;setFocus(true);}}
         onBlur={() => {
           setFocus(false);
           commit(text);
@@ -530,26 +547,33 @@ export function Check({
   );
 }
 
-export function ArmSwitch({
-  armed,
-  onToggle,
+/** Sliding on/off switch for a single MAX20087 output channel. */
+export function Toggle({
+  checked,
+  onChange,
   disabled,
+  label,
 }: {
-  armed: boolean;
-  onToggle: (v: boolean) => void;
+  checked: boolean;
+  onChange: (v: boolean) => void;
   disabled?: boolean;
+  label: string;
 }) {
   return (
     <button
-      className={`arm-switch ${armed ? "on" : ""}`}
-      onClick={() => !disabled && onToggle(!armed)}
-      title={armed ? "已解锁：允许写配置与启动任务" : "已锁定：禁止写配置"}
-      style={disabled ? { opacity: 0.45, cursor: "not-allowed" } : undefined}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      className={`toggle ${checked ? "on" : ""}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onChange(!checked);
+      }}
     >
-      <span className="track">
-        <span className="knob" />
-      </span>
-      ARM
+      <span className="toggle-knob" />
     </button>
   );
 }

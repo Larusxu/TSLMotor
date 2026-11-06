@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import ts from 'typescript';
+const source=fs.readFileSync('src/lib/percent-jog.ts','utf8');
+const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
+const {PercentJog}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+let now=0,values=[],limits=[];
+const jog=new PercentJog(v=>values.push(v),v=>limits.push(v),()=>now);
+try {
+ jog.start(50,1);now=1000;jog.tick();assert.equal(values.at(-1),65);
+ now=1500;jog.release();assert.equal(values.at(-1),72.5);
+ const released=values.length;now=4000;jog.tick();assert.equal(values.length,released);
+ jog.start(72.5,-1);now=5000;jog.tick();assert.equal(values.at(-1),57.5);jog.cancel();
+ now=6000;jog.start(99,1);now=6200;jog.tick();assert.equal(values.at(-1),100);assert.deepEqual(limits,[100]);
+ now=10000;jog.tick();jog.release();assert.deepEqual(limits,[100]);
+ jog.start(1,-1);now=10200;jog.tick();assert.equal(values.at(-1),0);assert.deepEqual(limits,[100,0]);
+ const count=values.length;jog.start(0,-1);assert.equal(values.length,count);assert.deepEqual(limits,[100,0,0]);
+ jog.start(0,1);now=11200;jog.tick();assert.equal(values.at(-1),15);jog.cancel();
+ jog.start(50,1);now=11220;jog.release();assert(Math.abs(values.at(-1)-50.3)<1e-9);
+ const stopped=values.length;now=12000;jog.tick();assert.equal(values.length,stopped);
+ jog.start(50,1);jog.cancel();now=12500;jog.release();assert.equal(values.length,stopped);
+ assert.throws(()=>jog.start(NaN,1));
+ const ui=fs.readFileSync('src/components/SemanticControls.tsx','utf8');
+ assert(!ui.includes('aria-label="手动点动"'));
+ assert(!ui.includes('semanticMotion.jog(')&&!ui.includes('semanticMotion.openLoopJog('));
+ assert(ui.includes('sliderChange.current=changeSlider'));
+ assert(ui.includes('onChange={e => changeSlider(Number(e.target.value))}'));
+ assert(ui.includes('<Badge>15% / s</Badge>'));
+ console.log('PASS 15%/s both directions, release freezes final slider target, short press, exact endpoint notification once, inward restart, cancellation; buttons share slider update path');
+}finally{jog.cancel();}

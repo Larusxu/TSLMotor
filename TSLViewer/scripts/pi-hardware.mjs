@@ -38,7 +38,7 @@ export async function hardware(report,{managed=true}={}) {
  };
  return {command,wait,registers,records,boot,
   async invoke(name,args){
-   const input=name==='motor_semantic'?{motor:args.motor,request:args.request}:name==='motor_storage'?{motor:args.motor,storage:args.request}:null;
+   const input=name==='motor_semantic'?{motor:args.motor,request:args.request}:name==='motor_storage'?{motor:args.motor,storage:args.request}:name==='main_control'?{motor:args.motor,control:{op:args.op,data:args.data}}:null;
    if(!input)throw Error('Unsupported hardware invoke '+name);
    const reply=await rpc(input);records.push({invoke:name,...input,response:reply});
    if(report)fs.appendFileSync(report+'.jsonl',JSON.stringify(records.at(-1))+'\n');return reply;

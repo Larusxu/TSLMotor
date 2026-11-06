@@ -1,6 +1,8 @@
+import {COUNTS_PER_RPM} from '../motor-profile-ui';
 import {semanticMotion} from '../semantic-motion';
 import {decodeRtmi} from '../native-rtmi';
 import {motionQuality,type MotionPoint,type MotionQuality} from './motion-quality';
+import {EndpointMotionRejected} from './endpoint';
 const delay=(ms:number)=>new Promise<void>(r=>setTimeout(r,ms));
 /** Bounded real motions at 40/60/50% of the homed stroke. No PI or W25 writes. */
 export async function measureEndpoint(motor:number,speeds:number[],cancelled:()=>boolean,notice:(text:string)=>void):Promise<MotionQuality[]> {
@@ -16,7 +18,7 @@ export async function measureEndpoint(motor:number,speeds:number[],cancelled:()=
     await semanticMotion.stop(motor,true);
     await semanticMotion.wait(motor,15000,r=>r.motor?.drive===0&&!r.motor.motion_active);
     await semanticMotion.wait(motor,10000,r=>!!r.motor?.feedback_fresh&&!r.pending);
-    await semanticMotion.command(motor,{kind:'task_speed',velocity_raw:Math.round(rpm*305.4198966044444),mode:0});
+    await semanticMotion.command(motor,{kind:'task_speed',velocity_raw:Math.floor(rpm*COUNTS_PER_RPM),mode:0});
     await semanticMotion.wait(motor,10000,r=>r.motor?.drive===0);
     await semanticMotion.configureRtmi(motor,{kind:'rtmi_config',enabled:true,sampling:127,addresses:[0x154,0x153,0x155,0x152,65535,65535,65535],decimation:2});
     await semanticMotion.wait(motor,10000,r=>r.motor?.drive===0);
@@ -39,6 +41,7 @@ export async function measureEndpoint(motor:number,speeds:number[],cancelled:()=
           for(const p of b.samples){last=p.at;points.push({at:p.at,channel:p.ch,raw:p.raw});}
           if(!completed&&Date.now()-poll>=100){
             const r=await semanticMotion.command(motor,{kind:'position_state'}),state=r.motor!;
+            if(!state.fault&&state.last_error===8)throw new EndpointMotionRejected(`${rpm} rpm → ${percent}%：本组PI未在任务时限内到位`);
             if(state.fault||state.last_error||!state.coordinate_valid)throw Error(`运动已停止：fault=${state.fault}, error=${state.last_error}`);
             if(!state.motion_active&&state.arrival_phase===4){completed=r.timestamp_ms;final=Number(state.position);}
             poll=Date.now();
@@ -52,7 +55,7 @@ export async function measureEndpoint(motor:number,speeds:number[],cancelled:()=
       }
     }finally{
       await semanticMotion.stop(motor,true);
-      await semanticMotion.wait(motor,15000,r=>r.motor?.drive===0&&!r.motor.motion_active);
+      await semanticMotion.wait(motor,15000,r=>r.motor?.drive===0&&!r.motor.motion_active,[8]);
       await semanticMotion.command(motor,{kind:'rtmi_config',enabled:false,sampling:255,addresses:Array(7).fill(65535),decimation:1});
       await semanticMotion.wait(motor,10000,r=>r.motor?.drive===0);
     }

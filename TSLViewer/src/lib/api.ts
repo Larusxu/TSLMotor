@@ -4,7 +4,7 @@
  * 只有桌面（Tauri）后端：所有串口/运动/存储操作都在 Rust 侧完成，前端只发指令、渲染事件。
  * 没有浏览器模拟器——上位机必须在 `src-tauri/target/release/tslviewer.exe` 里运行。
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
@@ -38,10 +38,30 @@ type EventMap = {
   "tsl:limit": LimitEvent;
 };
 
+/**
+ * 浏览器里跑（`start-web.ps1` 的排版预览）时没有桌面后端：明确拒绝，不伪造任何数据。
+ * 文案要一眼能看出"不是坏了，是没后端"。
+ */
+const DESKTOP =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in (window as unknown as Record<string, unknown>);
+
+const NO_BACKEND = "当前是浏览器排版预览，没有桌面通信后端。请用 tslviewer.exe 或 npm run app:dev 打开";
+
+function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (!DESKTOP) return Promise.reject(new Error(NO_BACKEND));
+  return tauriInvoke<T>(command, args);
+}
+
+/** 其它模块（语义状态/运动、控制、存储）统一走这里，浏览器里得到同一条可读错误。 */
+export function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  return invoke<T>(command, args);
+}
+
 export async function on<K extends keyof EventMap>(
   event: K,
   cb: (payload: EventMap[K]) => void
 ): Promise<UnlistenFn> {
+  if (!DESKTOP) return () => undefined;
   return listen<EventMap[K]>(event, (e) => cb(e.payload));
 }
 

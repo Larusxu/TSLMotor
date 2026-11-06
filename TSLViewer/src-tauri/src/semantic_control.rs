@@ -21,7 +21,8 @@ pub enum Command {
     Permit { enabled: bool, lease_ms: u32 },
     DriveDisable, DriveEnable,
     Commission { action: u8 },
-    Alignment { scan_degrees:u16, step_degrees:u16, settle_ms:u16, current_ma:u16, clearance:bool },
+    EncoderConfig { config: [u32;11] },
+    Alignment { scan_degrees:u16, step_degrees:u16, settle_ms:u16, current_ma:u16 },
     HomingConfigRead,
     HomingConfigWrite { config:[u16;8] },
     PiTune { group:u8, expected_config:u32, coefficients:[u32;4] },
@@ -34,6 +35,7 @@ pub enum Command {
     Mode { mode: u8 },
     TaskSpeed { velocity_raw:u32, mode:u8 },
     VelocityStart { velocity_raw:i32, lease_ms:u32 },
+    OpenLoopStart { velocity_raw:i32, lease_ms:u32 },
     JogStart { velocity_raw: i32, lease_ms: u32 },
     JogRenew,
     Move { position: String },
@@ -52,9 +54,10 @@ impl Command {
             Self::Limits{..}=>8, Self::Mode{..}=>9, Self::JogStart{..}=>10,
             Self::TaskSpeed{..}=>26,
             Self::VelocityStart{..}=>27,
+            Self::OpenLoopStart{..}=>30,
             Self::JogRenew=>11, Self::Move{..}=>12, Self::Work{..}=>13,
             Self::Stop{..}=>14, Self::EStop=>15, Self::ClearFault=>16, Self::Status=>17,
-            Self::Commission{..}=>18,
+            Self::Commission{..}|Self::EncoderConfig{..}=>18,
             Self::LogicalMove{..}=>19, Self::LogicalWork{..}=>20,
             Self::Alignment{..}=>18,
             Self::Homing{..}|Self::HomingStart{..}=>18,
@@ -75,7 +78,7 @@ pub fn encode(motor:u8,q:&Request)->Result<Vec<u8>,String>{
     match &q.command {
         Command::IdentState{cursor}=>{if motor==0{return Err("Identification requires a motor".into());}p.push(4);add32(&mut p,*cursor);},
         Command::IdentStart{loop_id,amplitude,duration_ms,travel_counts,sampling,excitation_sampling}=>{
-            if *loop_id>3||*amplitude==0||*amplitude>i32::MAX as u32||!(1000..=7000).contains(duration_ms)||*travel_counts==0||*travel_counts>655360{return Err("Invalid identification parameters".into());}
+            if *loop_id>3||*amplitude==0||*amplitude>i32::MAX as u32||!(1000..=7000).contains(duration_ms)||*travel_counts==0||*travel_counts>i32::MAX as u32{return Err("Invalid identification parameters".into());}
             p.push(*loop_id);for v in [amplitude,duration_ms,travel_counts]{add32(&mut p,*v);}if let Some(e)=excitation_sampling{p.push(sampling.unwrap_or(7));p.push(*e);}else if let Some(v)=sampling{p.push(*v);}
         },
         Command::PositionState=>{if motor==0{return Err("位置状态需要电机编号".into());}p.push(1);},
@@ -97,22 +100,25 @@ pub fn encode(motor:u8,q:&Request)->Result<Vec<u8>,String>{
             p.push(*group);add32(&mut p,*expected_config);for v in coefficients{add32(&mut p,*v);}
         }
         Command::ApplyConfiguration{payload}=>{
-            if payload.len()!=88&&payload.len()!=92{return Err("配置负载长度错误".into());}p.extend(payload);
+            if payload.len()!=88&&payload.len()!=92&&!((payload.len()==93||payload.len()==105)&&payload[92]==1){return Err("配置负载长度错误".into());}p.extend(payload);
+        }
+        Command::EncoderConfig{config}=>{
+            if motor==0{return Err("编码器配置需要电机编号".into());}
+            p.push(11);for v in config{add32(&mut p,*v);}
         }
         Command::Commission{action}=>{
             if !(1..=5).contains(action){return Err("初始化/校准操作无效".into());}
             p.push(*action);
         }
-        Command::Alignment{scan_degrees,step_degrees,settle_ms,current_ma,clearance}=>{
+        Command::Alignment{scan_degrees,step_degrees,settle_ms,current_ma}=>{
             if !(360..=1080).contains(scan_degrees)||!(15..=180).contains(step_degrees)||
                 scan_degrees%step_degrees!=0||!(100..=1000).contains(settle_ms)||!(50..=500).contains(current_ma){
                 return Err("标定范围/步长/稳定时间/电流无效".into());
             }
             p.push(2);
             for v in [scan_degrees,step_degrees,settle_ms,current_ma]{p.extend(v.to_le_bytes());}
-            p.push(*clearance as u8);
         }
-        Command::JogStart{velocity_raw,lease_ms}|Command::VelocityStart{velocity_raw,lease_ms}=>{p.extend(velocity_raw.to_le_bytes());add32(&mut p,*lease_ms);}
+        Command::JogStart{velocity_raw,lease_ms}|Command::VelocityStart{velocity_raw,lease_ms}|Command::OpenLoopStart{velocity_raw,lease_ms}=>{p.extend(velocity_raw.to_le_bytes());add32(&mut p,*lease_ms);}
         Command::HomingConfigWrite{config}=>{ for v in config {p.extend(v.to_le_bytes());} }
         Command::HomingStart{direction,step_unit,dual}=>{
             if *direction>1||!(100..=6000).contains(step_unit){return Err("找零方向或步长无效".into());}
@@ -142,6 +148,7 @@ pub struct MotorSnapshot {
     pub mode:u8,pub safety_phase:u8,pub limits_valid:bool,pub pending_action:u8,
     pub logical_position:Option<String>,pub logical_span:Option<String>,pub margin_counts:Option<u32>,
     pub coordinate_valid:bool,
+    pub temperature_raw:Option<i16>,
     pub arrival_phase:Option<u8>,pub arrival_flags:Option<u8>,pub arrival_ms:Option<u16>,
     pub arrival_tolerance:Option<u16>,pub arrival_dwell_ms:Option<u16>,
 }
@@ -152,16 +159,17 @@ pub struct Response {
     pub result_name:&'static str,pub replayed:bool,pub pending:bool,
     pub device:Option<DeviceSnapshot>,pub motor:Option<MotorSnapshot>,
     pub homing_config:Option<[u16;8]>,
-    pub encoder:Option<[u32;12]>,
+    pub encoder:Option<Vec<u32>>,
     pub rtmi:Option<Vec<u8>>,
     pub identification:Option<Vec<u8>>,
 }
 pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String>{
     let home_config=matches!(q.command,Command::HomingConfigRead|Command::HomingConfigWrite{..});
     let ident_query=matches!(q.command,Command::IdentState{..});
+    let dense_request=matches!(q.command,Command::IdentState{cursor} if cursor&0xffff0000==0x80000000);
     let rtmi_query=matches!(q.command,Command::RtmiState{..});
     let encoder_query=matches!(q.command,Command::EncoderState);
-    if motor>16 || (if ident_query {motor==0||p.len()<92||p.len()>124||(p.len()-92)%16!=0}else if rtmi_query {motor==0||p.len()<48||p.len()>120||(p.len()-48)%9!=0}else if encoder_query {motor==0||p.len()!=76}else if home_config {motor==0||p.len()!=44}else if motor==0 {p.len()!=40}else{p.len()!=96 && p.len()!=120 && p.len()!=128}) {return Err("语义状态长度错误".into());}
+    if motor>16 || (if ident_query {motor==0||p.len()<(if dense_request{44}else{92})||p.len()>124||(p.len()-44)%16!=0}else if rtmi_query {motor==0||p.len()<48||p.len()>120||(p.len()-48)%9!=0}else if encoder_query {motor==0||(p.len()!=76&&p.len()!=92)}else if home_config {motor==0||p.len()!=44}else if motor==0 {p.len()!=40}else{p.len()!=96 && p.len()!=120 && p.len()!=128}) {return Err("语义状态长度错误".into());}
     if p[0]!=2||p[1]!=q.command.code()||u32_at(p,2)!=q.request_id||p[23]&!3!=0 {return Err("语义响应身份/标志不匹配".into());}
     let names=["OK","BUSY","NOT_AUTHORIZED","DRIVE_NOT_READY","ALIGN_INVALID","HOME_INVALID","OUT_OF_RANGE","STALE_SESSION","TIMEOUT","FAULT_LATCHED","CONFIG_MISMATCH","EEPROM_INVALID","UNSUPPORTED","IO_ERROR","BAD_REQUEST","TRAVEL_LIMIT"];
     let result=p[22];let result_name=*names.get(result as usize).ok_or("未知主控结果码")?;
@@ -171,7 +179,7 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String>{
     if motor==0 {
         if b[4]!=16||b[5]>2||b[6]>16||b[7]>1||u32_at(b,0)&!3!=0{return Err("非法设备状态字段".into());}
     } else if !home_config && !encoder_query && !rtmi_query && !ident_query {
-        if p.len()>=120 && (b[88]>1 || b[89..92].iter().any(|x|*x!=0)) {return Err("非法归零坐标扩展".into());}
+        if p.len()>=120 && (b[88]>1 || b[91]>1) {return Err("非法归零坐标扩展".into());}
         if p.len()>=120 && b[88]!=0 && (b[48]==0||b[49]==0||b[50]==0||i64_at(b,76)<=0||u32_at(b,84)==0||i64_at(b,76)<=2*i64::from(u32_at(b,84))) {return Err("归零坐标约束错误".into());}
         for i in [44,45,47,48,49,50,52,53,54,55,66]{if b[i]>1{return Err("非法布尔状态字段".into());}}
         if b[46]>3||b[51]>5||b[64]>3||b[65]>3||b[67]>7{return Err("非法电机状态枚举".into());}
@@ -189,6 +197,7 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String>{
         logical_span:if p.len()>=120 && b[88]!=0 {Some(i64_at(b,76).to_string())}else{None},
         margin_counts:if p.len()>=120 && b[88]!=0 {Some(u32_at(b,84))}else{None},
         coordinate_valid:p.len()>=120 && b[88]!=0,
+        temperature_raw:if p.len()>=120 && b[91]==1 {Some(i16::from_le_bytes([b[89],b[90]]))}else{None},
         arrival_phase:if p.len()==128{Some(b[92])}else{None},
         arrival_flags:if p.len()==128{Some(b[93])}else{None},
         arrival_ms:if p.len()==128{Some(u16::from_le_bytes([b[94],b[95]]))}else{None},
@@ -196,7 +205,7 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String>{
         arrival_dwell_ms:if p.len()==128{Some(u16::from_le_bytes([b[98],b[99]]))}else{None},
     })}else{None};
     let homing_config=if home_config && result==0 {let mut c=[0;8];for i in 0..8 {c[i]=u16::from_le_bytes([b[i*2],b[i*2+1]]);}Some(c)}else{None};
-    let encoder=if encoder_query&&result==0{let mut v=[0;12];for i in 0..12{v[i]=u32_at(b,i*4);}if v[1]>1{return Err("编码器有效标志错误".into());}Some(v)}else{None};
+    let encoder=if encoder_query&&result==0{let v:Vec<u32>=b.chunks_exact(4).map(|x|u32_at(x,0)).collect();if v[1]>1{return Err("编码器有效标志错误".into());}Some(v)}else{None};
     let rtmi=if rtmi_query&&result==0 {
         if b[16]>1||b[18]>127||b[19]>8||b.len()!=20+b[19] as usize*9{return Err("Invalid RTMI snapshot".into());}
         // Reserved cursor reads eight diagnostic words, not live RTMI channels.
@@ -205,7 +214,13 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String>{
         Some(b.to_vec())
     }else{None};
     let identification=if ident_query&&result==0 {
-        if b[0]!=1||b[1]>3||b[2]>16||b[3]>3||u32_at(b,8)>22528||u32_at(b,48)>u32_at(b,8){return Err("Invalid identification snapshot".into());}Some(b.to_vec())
+        if b[0]==2 && dense_request {
+            if b[1]<2||b[1]>3||b[2]!=motor||b[3]>3||u32_at(b,8)>22528||u32_at(b,12)>u32_at(b,8){return Err("Invalid dense identification page".into());}
+        } else {
+        if b.len()<64{return Err("Invalid identification header".into());}
+        let diagnostic=matches!(q.command,Command::IdentState{cursor:0xffff_fffe})&&b.len()==96&&b[1]!=1&&u32_at(b,48)==0xffff_fffe&&u32_at(b,64)==0x31444950;
+        if b[0]!=1||b[1]>3||b[2]>16||b[3]>3||u32_at(b,8)>22528||(!diagnostic&&u32_at(b,48)>u32_at(b,8)){return Err("Invalid identification snapshot".into());}
+        }Some(b.to_vec())
     }else{None};
     Ok(Response{identification,rtmi,encoder,homing_config,protocol_version:2,operation:p[1],request_id:q.request_id,boot_id:boot.to_string(),session_id:u32_at(p,14),task_id:u32_at(p,18),timestamp_ms:u32_at(p,24),result,result_name,replayed:p[23]&1!=0,pending:p[23]&2!=0,device,motor:snapshot})
 }
@@ -213,6 +228,25 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ramp_apply_extension_fits_gateway_frame() {
+        let mut payload=vec![0;105];payload[92]=1;
+        assert_eq!(encode(1,&req(Command::ApplyConfiguration{payload})).unwrap().len(),127);
+        for length in [94,104,106] {let mut payload=vec![0;length];payload[92]=1;assert!(encode(1,&req(Command::ApplyConfiguration{payload})).is_err());}
+    }
+    #[test]
+    fn encoder_live_configuration_payload_and_extended_snapshot() {
+        let config=[16384,1,14,1,2000000,17,0,16383,6000,3,u32::MAX];
+        let p=encode(1,&req(Command::EncoderConfig{config})).unwrap();
+        assert_eq!(p.len(),67);assert_eq!(p[22],11);
+        for (i,v) in config.iter().enumerate(){assert_eq!(u32_at(&p,23+i*4),*v);}
+        assert!(encode(0,&req(Command::EncoderConfig{config})).is_err());
+        let q=req(Command::EncoderState);let p=encode(1,&q).unwrap();
+        let mut r=vec![0;92];r[..22].copy_from_slice(&p[..22]);r[32]=1;
+        r[76..80].copy_from_slice(&0xf6118d0eu32.to_le_bytes());
+        let v=decode(1,&q,&r).unwrap().encoder.unwrap();
+        assert_eq!(v.len(),16);assert_eq!(v[12],0xf6118d0e);
+    }
     fn req(command:Command)->Request{Request{request_id:1,boot_id:"1311768467463790320".into(),session_id:123,task_id:0,command}}
     #[test]
     fn mode_task_vectors(){
@@ -223,6 +257,10 @@ mod tests {
         let p=encode(9,&req(Command::VelocityStart{velocity_raw:-152709,lease_ms:700})).unwrap();
         assert_eq!(p[1],27);assert_eq!(&p[22..26],&(-152709i32).to_le_bytes());
         assert_eq!(&p[26..30],&700u32.to_le_bytes());
+        let p=encode(9,&req(Command::OpenLoopStart{velocity_raw:-91626,lease_ms:700})).unwrap();
+        assert_eq!(p[1],30);assert_eq!(&p[22..26],&(-91626i32).to_le_bytes());
+        let mut payload=vec![0;93];payload[92]=1;
+        assert_eq!(encode(9,&req(Command::ApplyConfiguration{payload})).unwrap().len(),115);
         assert!(encode(9,&req(Command::TaskSpeed{velocity_raw:0,mode:0})).is_err());
         assert!(encode(9,&req(Command::TaskSpeed{velocity_raw:1,mode:4})).is_err());
     }
@@ -256,6 +294,11 @@ mod tests {
             let p=encode(9,&req(Command::IdentStart{loop_id:2,amplitude:50,duration_ms:3000,travel_counts:32768,sampling,excitation_sampling:Some(255)})).unwrap();
             assert_eq!(p.len(),37);assert_eq!(&p[35..],&[sampling.unwrap_or(7),255]);
         }
+        for travel in [655361,43410456,i32::MAX as u32] {
+            let p=encode(9,&req(Command::IdentStart{loop_id:1,amplitude:994,duration_ms:1000,travel_counts:travel,sampling:Some(7),excitation_sampling:Some(7)})).unwrap();
+            assert_eq!(u32_at(&p,31),travel);
+        }
+        assert!(encode(9,&req(Command::IdentStart{loop_id:1,amplitude:994,duration_ms:1000,travel_counts:0x80000000,sampling:None,excitation_sampling:None})).is_err());
         assert_eq!(encode(9,&req(Command::IdentAbort)).unwrap()[1],29);
         let q=req(Command::IdentState{cursor:10});let p=encode(9,&q).unwrap();
         assert_eq!(&p[22..],&[4,10,0,0,0]);
@@ -267,6 +310,25 @@ mod tests {
         assert!(decode(9,&q,&r[..123]).is_err());
         r[36..40].copy_from_slice(&22528u32.to_le_bytes());assert!(decode(9,&q,&r).is_ok());
         r[36..40].copy_from_slice(&22529u32.to_le_bytes());assert!(decode(9,&q,&r).is_err());
+        r[36..40].copy_from_slice(&12u32.to_le_bytes());
+        r[76..80].copy_from_slice(&0xffff_fffeu32.to_le_bytes());
+        r[92..96].copy_from_slice(&0x31444950u32.to_le_bytes());
+        assert!(decode(9,&q,&r).is_err());
+        let diagnostic=req(Command::IdentState{cursor:0xffff_fffe});
+        assert!(decode(9,&diagnostic,&r).is_ok());
+        r[92]=0;assert!(decode(9,&diagnostic,&r).is_err());
+    }
+    #[test]
+    fn dense_identification_contract() {
+        let q=req(Command::IdentState{cursor:0x80000000});let p=encode(9,&q).unwrap();
+        let mut r=vec![0;124];r[..22].copy_from_slice(&p[..22]);
+        r[28]=2;r[29]=2;r[30]=9;r[31]=1;
+        r[36..40].copy_from_slice(&10u32.to_le_bytes());r[40..44].copy_from_slice(&5u32.to_le_bytes());
+        assert_eq!(decode(9,&q,&r).unwrap().identification.unwrap().len(),96);
+        assert!(decode(9,&req(Command::IdentState{cursor:0}),&r).is_err());
+        r[30]=8;assert!(decode(9,&q,&r).is_err());r[30]=9;
+        r[40..44].copy_from_slice(&11u32.to_le_bytes());assert!(decode(9,&q,&r).is_err());
+        assert!(decode(9,&q,&r[..43]).is_err());
     }
     #[test]
     fn native_rtmi_contract() {
@@ -334,7 +396,9 @@ mod tests {
         let old=decode(9,&q,&p[..96]).unwrap().motor.unwrap();
         assert!(!old.coordinate_valid&&old.logical_position.is_none());
         p[28+49]=0;assert!(decode(9,&q,&p).is_err());p[28+49]=1;
-        p[28+89]=1;assert!(decode(9,&q,&p).is_err());
+        p[28+89..28+91].copy_from_slice(&(-1234i16).to_le_bytes());p[28+91]=1;
+        assert_eq!(decode(9,&q,&p).unwrap().motor.unwrap().temperature_raw,Some(-1234));
+        p[28+91]=2;assert!(decode(9,&q,&p).is_err());
         let m=encode(9,&req(Command::LogicalMove{position:"2000".into()})).unwrap();
         assert_eq!(m[1],19);assert_eq!(&m[22..],&2000i64.to_le_bytes());
         let w=encode(9,&req(Command::LogicalWork{a:"2000".into(),b:"8000".into(),half_period_ms:500,cycles:1})).unwrap();

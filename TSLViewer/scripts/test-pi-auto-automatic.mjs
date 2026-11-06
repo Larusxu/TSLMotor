@@ -37,11 +37,13 @@ assert(restored>0);
 let attempts=0;
 await assert.rejects(automaticTune({...port,capture:async()=>plant(32,1),apply:async()=>{attempts++;throw Error('WRITE_FAILED');}},5,8),/WRITE_FAILED/);
 assert.equal(attempts,1);assert(restored>0);
+let bandwidthWrites=0;await assert.rejects(automaticTune({...port,capture:async()=>plant(32,1),apply:async()=>{bandwidthWrites++;}},1000),/超出本次采样可验证范围/);assert.equal(bandwidthWrites,0);
+const validationFlags=[];await automaticTune({...port,capture:async validation=>{validationFlags.push(!!validation);return plant(...current);}},5,6);assert(validationFlags.slice(-2).every(Boolean));
 let count=0;await assert.rejects(automaticTune({...port,capture:async()=>{count++;return plant(32,1);},cancelled:()=>count>0},5,8),/取消/);
 await assert.rejects(automaticTune({...port,capture:async()=>{throw Error('CAPTURE_FAILED');},restore:async()=>{throw Error('RESTORE_FAILED');}},5),/CAPTURE_FAILED.*RESTORE_FAILED/);
 console.log('PASS frequency coherence/bandwidth, desired response optimization, zero I, repeated trials, write failure, cancellation and restore failure');
 const {motionQuality,motionScore,qualifiedMotion}=await import(moduleUrl('motion-quality'));
-const {optimizeEndpoint}=await import(moduleUrl('endpoint'));
+const {optimizeEndpoint,EndpointMotionRejected}=await import(moduleUrl('endpoint'));
 const points=Array.from({length:11},(_,k)=>[
  {at:k*100,channel:0,raw:Math.round(500*305.4198966044444)},
  {at:k*100,channel:1,raw:100<<16},
@@ -60,3 +62,15 @@ const starting=[...words];let cancelledNow=false;
 await assert.rejects(optimizeEndpoint(starting,{apply:async v=>{words=[...v];},measure:async()=>{cancelledNow=true;return [q];},cancelled:()=>cancelledNow,notice:()=>{}}),/取消/);
 assert.deepEqual(words,starting);
 console.log('PASS endpoint direction, tail, separate speed/position overshoot, repeated selection and cancelled-round restoration');
+let rejected=0;words=[1,2,263*65536+3,3200*65536];
+const recovered=await optimizeEndpoint(words,{apply:async v=>{words=[...v];},measure:async()=>{if((words[2]>>>16)===395){rejected++;throw new EndpointMotionRejected("candidate timeout");}return [q];},cancelled:()=>false,notice:()=>{}});
+assert.equal(rejected,1);assert(!recovered.improved);assert.equal(words[2],263*65536+3);
+await assert.rejects(optimizeEndpoint(words,{apply:async()=>{},measure:async()=>{throw Error("electrical fault");},cancelled:()=>false,notice:()=>{}}),/electrical fault/);
+console.log('PASS timed-out endpoint candidate is rejected without masking electrical/transport failures');
+
+// An excessive initial controller must search downwards before making it stronger.
+let high=[1024,0];const highWrites=[];
+const excessive=()=>{const gain=high[0]/128;return {...known,coefficient:high[0]*65536,coefficients:[high[0]*65536,high[0]*65536,0,0],samples:known.samples.map(v=>({...v,actual:v.actual*gain}))};};
+await automaticTune({capture:async()=>excessive(),apply:async(_c,p,i)=>{high=[p,i];highWrites.push(p);},restore:async()=>{},cancelled:()=>false,notice:()=>{}},30,8);
+assert(highWrites.length);assert(highWrites[0]<1024);
+console.log('PASS excessive initial response searches lower gains before amplification');

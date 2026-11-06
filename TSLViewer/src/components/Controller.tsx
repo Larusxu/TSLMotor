@@ -168,7 +168,7 @@ export default function Controller() {
         <Button disabled={!app.connected || busy} onClick={() => void rescanTmc()}>
           检测 TMC
         </Button>
-        <Button disabled={!app.connected || !app.armed || busy} onClick={() => void act(app.motor, 5, [1])}>
+        <Button disabled={!app.connected || busy} onClick={() => void act(app.motor, 5, [1])}>
           当前电机逻辑上电
         </Button>
         <Button disabled={!app.connected || busy} onClick={() => void act(app.motor, 5, [0])}>

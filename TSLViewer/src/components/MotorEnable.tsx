@@ -11,22 +11,20 @@ export default function MotorEnable() {
   const app = useApp();
   const [running, setRunning] = useState(false);
   const known = app.mode === "direct" || (app.connected && app.semantic.motor === app.motor && semanticFresh(app.semantic));
-  const on = app.mode === "direct" ? app.motorTmc === "online" : semanticFresh(app.semantic) && app.semantic.motor === app.motor && !!app.semantic.state?.logic_power && !!app.semantic.state?.config_verified && !app.semantic.state?.fault;
-  const initializing = app.mode !== "direct" && semanticFresh(app.semantic) && app.semantic.motor === app.motor && app.semantic.state?.drive === 1;
+  const on = app.mode === "direct" ? app.motorTmc === "online" : semanticFresh(app.semantic) && app.semantic.motor === app.motor && !!app.semantic.state?.logic_power;
 
-  const disabled = !app.connected || !app.armed || app.busy || running || initializing;
+  const disabled = !app.connected || app.busy || running || app.acquiring;
   const title = !app.connected
     ? "先连接主控"
-    : !app.armed
-      ? "需先解锁 ARM 再上电"
-      : on
-        ? app.mode === "direct" ? `M${app.motor} CHIP.ID 已响应` : `M${app.motor} 逻辑供电与配置已就绪；运动仍需授权`
+    : on
+        ? app.mode === "direct" ? `M${app.motor} CHIP.ID 已响应` : `点击关闭 M${app.motor} 逻辑供电`
         : app.mode === "direct" ? `检查 M${app.motor} CHIP.ID` : `初始化 M${app.motor} 并校验配置，不启动运动`;
 
   async function run() {
     setRunning(true);
     try {
-      await app.enableMotor();
+      if(on&&app.mode!=="direct")await app.disableMotor();
+      else await app.enableMotor();
     } finally {
       setRunning(false);
     }
@@ -39,7 +37,7 @@ export default function MotorEnable() {
       disabled={disabled}
       title={title}
     >
-      {`M${app.motor} · ${running || initializing ? "使能中" : !known ? "未确认" : on ? "已使能" : "未使能"}`}
+      {`M${app.motor} · ${running ? (on ? "关闭中" : "使能中") : !known ? "未确认" : on ? "已使能" : "未使能"}`}
     </button>
   );
 }

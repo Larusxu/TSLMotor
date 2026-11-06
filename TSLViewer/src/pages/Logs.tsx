@@ -4,12 +4,14 @@ import { useApp } from "../lib/app-store";
 import { Badge, Button, Card, Icon, Segmented, TextField } from "../components/ui";
 
 type Level = "all" | "info" | "warn" | "error";
+const logTime = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, fractionalSecondDigits: 3 });
 
 export default function LogsPage() {
   const app = useApp();
   const [level, setLevel] = useState<Level>("all");
   const [query, setQuery] = useState("");
   const [follow, setFollow] = useState(true);
+  const [visibleCount, setVisibleCount] = useState(200);
   const box = useRef<HTMLDivElement | null>(null);
 
   const rows = useMemo(() => {
@@ -84,9 +86,10 @@ export default function LogsPage() {
         style={{ height: "calc(100vh - 210px)", borderTop: "1px solid var(--line-soft)" }}
       >
         {rows.length === 0 && <div className="empty">暂无日志</div>}
-        {rows.map((l, i) => (
+        {rows.length > visibleCount && <Button size="sm" variant="ghost" onClick={() => { setFollow(false); setVisibleCount(n => n + 200); }}>加载更早日志（{rows.length - visibleCount} 条）</Button>}
+        {rows.slice(-visibleCount).map((l, i) => (
           <div key={`${l.ts}-${i}`} className={`log-row ${l.level}`}>
-            <span className="t">{new Date(l.ts).toLocaleTimeString("zh-CN", { hour12: false, fractionalSecondDigits: 3 })}</span>
+            <span className="t">{logTime.format(l.ts)}</span>
             <span className="lv">{l.level}</span>
             <span className="msg">
               <span className="muted">[{l.source}]</span> {l.message}

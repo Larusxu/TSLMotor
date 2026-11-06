@@ -2,21 +2,22 @@
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app-store";
-import Controller from "../components/Controller";
+import FleetOverview from "../components/FleetOverview";
+import type { CylinderModel } from "../lib/cylinder";
+import { OpenLoopJog } from "../components/OpenLoopJog";
+import { semanticFresh } from "../lib/semantic-state";
 import {
   Badge,
   Button,
   Card,
-  Check,
   Field,
-  Icon,
   KV,
   Notice,
   NumField,
   Stat,
 } from "../components/ui";
 import { STATUS_BITS } from "../lib/registers";
-import { fmt, hex, s16hi, s16lo, tempC } from "../lib/units";
+import { fmt, hex, s16hi, tempC } from "../lib/units";
 
 const MODES = [
   "PWM_OFF",
@@ -33,12 +34,12 @@ const MODES = [
   "VOLTAGE_EXT",
 ];
 
-export default function Overview() {
+export default function Overview({ cylinders }: { cylinders: CylinderModel }) {
   const app = useApp();
   const [regs, setRegs] = useState<Record<number, number>>({});
   const [, tick] = useState(0);
-  const [target, setTarget] = useState(300);
-  const [confirmRun, setConfirmRun] = useState(false);
+
+
   const history = useRef<number[][]>([[], [], [], []]);
 
   const polling = useRef(false);
@@ -76,7 +77,6 @@ export default function Overview() {
   // Read straight from the store on every render; the tick effect above keeps
   // this component in sync while streaming.
   const speed = app.scope.latest.get(0);
-  const liveTarget = app.scope.latest.get(1);
   const liveTorque = app.scope.latest.get(2);
   useEffect(() => {
     if (speed === undefined) return;
@@ -89,106 +89,75 @@ export default function Overview() {
   const status = regs[0x009] ?? 0;
   const drvOn = ((regs[0x101] ?? 0) >>> 16) & 1;
   const vm = s16hi(regs[0x083] ?? 0);
-  const tempRaw = s16hi(regs[0x084] ?? 0);
-  const torque = s16hi(regs[0x153] ?? 0) * app.cal.maPerCount;
-  const actualRpm = (regs[0x154] ?? 0) / app.cal.countsPerRpm;
+  const observed=app.connected&&app.semantic.motor===app.motor&&semanticFresh(app.semantic)?app.semantic.state:null;
+  const tempRaw=app.mode==="direct"?(regs[0x084]==null?null:s16hi(regs[0x084])):observed?.temperature_raw;
+  const measuredRpm=app.mode==="direct"?(regs[0x154]??0)/app.cal.countsPerRpm:observed?.feedback_fresh?-observed.velocity_raw/app.cal.countsPerRpm:null;
+  const torque = app.mode==="direct"?s16hi(regs[0x153] ?? 0)*app.cal.maPerCount:observed?.feedback_fresh?observed.iq_raw*app.cal.maPerCount:0;
   const iS = (regs[0x171] ?? 0) & 0xffff;
 
   const activeFaults = STATUS_BITS.filter(([bit, , tone]) => tone !== "info" && ((status >>> bit) & 1) === 1);
 
   return (
     <div className="grid" style={{ gap: 14 }}>
-      <div className="grid cols-4">
+      {app.mode !== "direct" && <FleetOverview cylinders={cylinders}/>}
+      {app.mode === "direct" && <div className="grid cols-3">
         <Stat
           label="实际转速"
-          value={speed !== undefined ? fmt(speed, 0) : fmt(actualRpm, 0)}
+          value={speed !== undefined ? fmt(speed, 0) : measuredRpm==null?"—":fmt(measuredRpm, 0)}
           unit="RPM"
-          delta={app.streaming ? `RTMI · CH0` : "Direct read · 0x154"}
+          delta={app.streaming ? "RTMI" : app.mode==="direct"?"芯片读回":"主控反馈"}
           spark={history.current[0]}
-        />
-        <Stat
-          label="目标转速"
-          value={liveTarget !== undefined ? fmt(liveTarget, 0) : fmt((regs[0x150] ?? 0) / app.cal.countsPerRpm, 0)}
-          unit="RPM"
-          delta={`斜坡 ${mode === 3 ? "速度模式" : MODES[mode] ?? "—"}`}
         />
         <Stat
           label="力矩电流 iQ"
           value={fmt(liveTorque ?? torque, 0)}
           unit="mA"
-          delta={`限幅 ${fmt(800, 0)} mA · ${(((liveTorque ?? torque) / 800) * 100).toFixed(0)}%`}
+          delta={observed?`限幅 ${fmt(observed.effective_iq_raw*app.cal.maPerCount,0)} mA`:undefined}
           tone={Math.abs(liveTorque ?? torque) > 700 ? "var(--warn)" : undefined}
         />
         <Stat
-          label="结温"
-          value={tempRaw === 0 ? "—" : fmt(tempC(tempRaw * 65536, app.cal.tempOffset), 1)}
+          label="温度"
+          value={tempRaw == null ? "—" : fmt(tempC(tempRaw * 65536, app.cal.tempOffset), 1)}
           unit="°C"
-          delta={tempRaw === 0 ? "未校准（原始 " + tempRaw + "）" : `原始 ${tempRaw}`}
         />
-      </div>
+      </div>}
 
-      <div className="grid split-2-1"><div className="stack">
-          <Card title="手动运行" sub="VELOCITY MODE">
-            <div className="stack" style={{ gap: 10 }}>
-              <Field label="目标转速" hint="RPM">
-                <NumField value={target} onChange={setTarget} min={-3000} max={3000} step={50} unit="RPM" />
+      <div className="grid cols-2" style={{ alignItems: "start" }}>
+        <OpenLoopJog />
+
+        <Card title="机器常数" sub="UNIT CONVERSION">
+          <div className="stack" style={{ gap: 10 }}>
+            <div className="row" style={{ gap: 8 }}>
+              <Field label="极对数">
+                <NumField value={app.cal.poles} onChange={(v) => app.setCal({ poles: v })} min={1} max={127} />
               </Field>
-              <Check checked={confirmRun} onChange={setConfirmRun}>
-                我已确认电机固定、电源限流
-              </Check>
-              <div className="row" style={{ gap: 8 }}>
-                <Button
-                  variant="primary"
-                  block
-                  disabled={!app.connected || !app.armed || !confirmRun}
-                  icon={<Icon.Bolt width={14} height={14} />}
-                  onClick={async () => {
-                    try {
-                      // with the travel guard armed this goes through the limit
-                      // check; without feedback it is a plain velocity command
-                      if (app.axis?.limits.enabled) {
-                        app.setAxis(await api.axisJog(target, app.cal.poles, app.cal.countsPerRpm));
-                      } else {
-                        await api.setVelocity(target, app.cal.poles, app.cal.countsPerRpm);
-                      }
-                      app.toast("ok", `速度目标 ${target} RPM`);
-                    } catch (e) {
-                      app.toast("error", String(e));
-                    }
-                  }}
-                >
-                  启动
-                </Button>
-                <Button
-                  variant="ghost"
-                  disabled={!app.connected}
-                  icon={<Icon.Stop width={13} height={13} />}
-                  onClick={async () => {
-                    try {
-                      await api.stopMotion(app.cal.poles);
-                      app.toast("warn", "已停止");
-                    } catch (e) {
-                      app.toast("error", String(e));
-                    }
-                  }}
-                >
-                  停止
-                </Button>
-              </div>
-              {!app.armed && <span className="tiny muted">需先解锁 ARM</span>}
-              {app.axis?.limits.enabled ? (
-                <span className="tiny" style={{ color: "var(--ok)" }}>
-                  行程保护已生效：目标越界会被拒绝
-                </span>
-              ) : (
-                <span className="tiny muted">软限位未开启，转速命令直通芯片（机械行程页可开启）</span>
-              )}
+              <Field label="PWM MAX_COUNT">
+                <NumField
+                  value={app.cal.pwmMaxCount}
+                  onChange={(v) => app.setCal({ pwmMaxCount: v })}
+                  min={600}
+                  max={20000}
+                  step={10}
+                />
+              </Field>
             </div>
-          </Card>
-        </div>
+            <div className="row" style={{ gap: 8 }}>
+              <Field label="mA / LSB">
+                <NumField value={app.cal.maPerCount} onChange={(v) => app.setCal({ maPerCount: v })} step={0.0001} />
+              </Field>
+              <Field label="counts / RPM">
+                <NumField value={app.cal.countsPerRpm} onChange={(v) => app.setCal({ countsPerRpm: v })} step={0.1} />
+              </Field>
+            </div>
+            <Notice>
+              Tesla 平台默认：极对数 1、16384 CPR、4× CSA → 0.20131 mA/LSB、305.4 counts/RPM、25 kHz PWM。
+            </Notice>
+            {app.mode !== "direct" && <div className="tiny muted">公共额定转速参考：{app.maximumRpm ?? "未读取"} rpm；任务转速仅受当前电机已保存的长期转速限幅约束。</div>}
+          </div>
+        </Card>
       </div>
 
-      <div className="grid cols-3">
+      {app.mode === "direct" && <div className="grid cols-2" style={{ alignItems: "start" }}>
         <Card title="驱动状态" sub="MCC_STATUS / GDRV">
           <KV
             rows={[
@@ -208,7 +177,7 @@ export default function Overview() {
             <Button
               size="sm"
               variant="ghost"
-              disabled={!app.connected || !app.armed}
+              disabled={!app.connected}
               onClick={async () => {
                 try {
                   const reg = await api.readReg(0x101);
@@ -225,7 +194,7 @@ export default function Overview() {
             <Button
               size="sm"
               variant="ghost"
-              disabled={!app.connected || !app.armed}
+              disabled={!app.connected}
               onClick={async () => {
                 try {
                   await api.writeReg(0x00a, 0xffffffff, false);
@@ -260,61 +229,8 @@ export default function Overview() {
             {status === 0 && <div className="empty">尚未读取状态字</div>}
           </div>
         </Card>
+      </div>}
 
-        <Card title="机器常数" sub="UNIT CONVERSION">
-          <div className="stack" style={{ gap: 10 }}>
-            <div className="row" style={{ gap: 8 }}>
-              <Field label="极对数">
-                <NumField value={app.cal.poles} onChange={(v) => app.setCal({ poles: v })} min={1} max={127} />
-              </Field>
-              <Field label="PWM MAX_COUNT">
-                <NumField
-                  value={app.cal.pwmMaxCount}
-                  onChange={(v) => app.setCal({ pwmMaxCount: v })}
-                  min={600}
-                  max={20000}
-                  step={10}
-                />
-              </Field>
-            </div>
-            <div className="row" style={{ gap: 8 }}>
-              <Field label="mA / LSB">
-                <NumField value={app.cal.maPerCount} onChange={(v) => app.setCal({ maPerCount: v })} step={0.0001} />
-              </Field>
-              <Field label="counts / RPM">
-                <NumField value={app.cal.countsPerRpm} onChange={(v) => app.setCal({ countsPerRpm: v })} step={0.1} />
-              </Field>
-            </div>
-            <Notice>
-              Tesla 平台默认：极对数 1、16384 CPR、4× CSA → 0.20131 mA/LSB、305.4 counts/RPM、25 kHz PWM。
-            </Notice>
-            {app.mode !== "direct" && <div className="tiny muted">公共额定转速参考：{app.maximumRpm ?? "未读取"} rpm；任务转速仅受当前电机已保存的长期转速限幅约束。</div>}
-          </div>
-        </Card>
-      </div>
-
-      <Card title="原始遥测回显" sub="RAW REGISTER ECHO">
-        <div className="grid cols-4" style={{ gap: 10 }}>
-          {([
-            [0x154, "速度实际", (v: number) => `${v} (${fmt(v / app.cal.countsPerRpm, 1)} RPM)`],
-            [0x153, "力矩/磁链实际", (v: number) => `${s16hi(v)} / ${s16lo(v)}`],
-            [0x171, "U_S / I_S", (v: number) => `${(v >>> 16) & 0xffff} / ${v & 0xffff}`],
-            [0x084, "结温原始", (v: number) => `${s16hi(v)}`],
-          ] as [number, string, (v: number) => string][]).map(([addr, label, fmtFn]) => (
-            <div key={String(addr)} className="matrix">
-              <div className="cell">
-                <b>{label}</b>
-                <span className="mono">{fmtFn(regs[addr] ?? 0)}</span>
-                <span className="mono" style={{ color: "var(--text-4)" }}>
-                  {hex(Number(addr), 3)}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {app.mode !== "direct" && <Controller />}
     </div>
   );
 }

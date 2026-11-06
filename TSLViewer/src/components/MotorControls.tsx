@@ -35,7 +35,7 @@ export function MotorControls({ homing }: { homing: boolean }) {
   const enabled = !!state?.enabled && !!state?.active;
   const connected = app.connected && app.mode !== "direct";
   const locked = app.motionActive || busy || homing || app.jobRunning;
-  const canMove = connected && enabled && safe && app.armed && !busy && !homing && !error && state?.safety_phase !== "FAULT_LATCHED";
+  const canMove = connected && enabled && safe && !busy && !homing && !error && state?.safety_phase !== "FAULT_LATCHED";
   const show = (value: number | null | undefined, digits = 1) => value == null ? "—" : value.toFixed(digits);
   const stop = useCallback(async () => {
     revision.current++; jogHeld.current = false; active.current = false;
@@ -52,7 +52,7 @@ export function MotorControls({ homing }: { homing: boolean }) {
     alive.current = true;
     const interrupt = () => { if (active.current) void stop(); };
     const key = (event: KeyboardEvent) => { if (event.key === "Escape") {
-      void stop(); void api.emergencyStop(); app.setArmed(false);
+      void stop(); void api.emergencyStop();
     } };
     const visibility = () => { if (document.hidden) interrupt(); };
     window.addEventListener("blur", interrupt); window.addEventListener("keydown", key);
@@ -72,7 +72,7 @@ export function MotorControls({ homing }: { homing: boolean }) {
       if (pending || app.jobRunning || homing) return;
       pending = true;
       try {
-        if (active.current && !app.armed) await stop();
+        if (active.current && !connected) await stop();
         if (active.current) await controlApi.pulse();
         const control = await controlApi.state();
         const parameters = await controlApi.parameters(app.motor);
@@ -90,7 +90,7 @@ export function MotorControls({ homing }: { homing: boolean }) {
     };
     void tick(); const timer = window.setInterval(tick, 250);
     return () => { disposed = true; window.clearInterval(timer); };
-  }, [connected, app.motor, app.jobRunning, app.armed, homing, stop]);
+  }, [connected, app.motor, app.jobRunning, homing, stop]);
   useEffect(() => {
     if (!state?.zero_valid) { rangeSeen.current = null; return; }
     if (!state.active && state.travel_deg != null && rangeSeen.current !== state.travel_deg) {
@@ -103,7 +103,7 @@ export function MotorControls({ homing }: { homing: boolean }) {
     await controlApi.command({ kind, target: value, b, amplitude, period_s: period, cycles, rpm });
   };
   const enable = () => run(async () => {
-    if (!safe || !app.armed) throw Error("请确认安全并解锁 ARM");
+    if (!safe) throw Error("请确认安全条件");
     await app.stopStream();
     await controlApi.start({ ...cfg, motor: app.motor, poles: app.cal.poles });
     active.current = true; app.setMotionActive(true);
@@ -128,12 +128,12 @@ export function MotorControls({ homing }: { homing: boolean }) {
   return <div className="grid" style={{ gap: 14 }}>
     <Card bodyClass="stack" title="电机控制" sub={`M${app.motor} · 主控485 / CAN → TMC6460`} right={<Badge tone={enabled ? "warn" : "neutral"}>{enabled ? "输出使能" : "输出关闭"}</Badge>}>
       <div className="row-wrap" style={{ gap: 8 }}>
-        <Button disabled={!connected || locked || !app.armed} onClick={() => void run(app.enableMotor)}>逻辑上电</Button>
-        <Button variant="primary" disabled={!connected || locked || !safe || !app.armed || !state?.zero_valid || !params?.consistent || state?.safety_phase === "FAULT_LATCHED"} onClick={enable}>启动电机（使能输出）</Button>
+        <Button disabled={!connected || locked} onClick={() => void run(app.enableMotor)}>逻辑上电</Button>
+        <Button variant="primary" disabled={!connected || locked || !safe || !state?.zero_valid || !params?.consistent || state?.safety_phase === "FAULT_LATCHED"} onClick={enable}>启动电机（使能输出）</Button>
         <Button onClick={() => void stop()}>停止电机（断使能）</Button>
         <Button disabled={!enabled || !cfg.mode.endsWith("ramp")} onClick={() => void run(() => command("decel_stop"))}>正常减速停止</Button>
         <Button disabled={!connected || locked || state?.safety_phase !== "FAULT_LATCHED"} onClick={() => void run(() => controlApi.clearSafety(app.motor))}>清除软件故障</Button>
-        <Button variant="danger" onClick={() => { void stop(); void api.emergencyStop(); app.setArmed(false); }}>急停 · ESC</Button>
+        <Button variant="danger" onClick={() => { void stop(); void api.emergencyStop();  }}>急停 · ESC</Button>
       </div>
       <div className="grid cols-4" style={{ gap: 10 }}>
         <Field label="运动模式"><div className="input-wrap"><select aria-label="运动模式" disabled={locked} value={cfg.mode} onChange={e => { setSafe(false); setCfg(c => ({ ...c, mode: e.target.value as MotionMode, planning: "limits" })); }}>
@@ -164,7 +164,7 @@ export function MotorControls({ homing }: { homing: boolean }) {
         <Field label="实际生效速度 · 只读"><div className="mono">{show(state?.active ? state.effective_velocity_rpm : params?.effective_velocity_rpm)} RPM</div></Field>
       </div>
       <div className="row-wrap" style={{ gap: 10 }}>
-        <Button disabled={!connected || locked || !app.armed || !params?.driver} onClick={() => void run(async () => { await controlApi.limits({ ...cfg, motor: app.motor, poles: app.cal.poles }); setParams(await controlApi.parameters(app.motor)); app.toast("ok", "任务参数已应用并读回；输出仍关闭"); })}>应用参数（不启动运动）</Button>
+        <Button disabled={!connected || locked || !params?.driver} onClick={() => void run(async () => { await controlApi.limits({ ...cfg, motor: app.motor, poles: app.cal.poles }); setParams(await controlApi.parameters(app.motor)); app.toast("ok", "任务参数已应用并读回；输出仍关闭"); })}>应用参数（不启动运动）</Button>
         <Button disabled={!connected || locked} onClick={() => void run(async () => { await api.readPid(); setParams(await controlApi.parameters(app.motor)); })}>读取驱动器档案</Button>
         <span className="tiny muted">机构正向对应芯片负向；65536计数/圈。插补/斜坡由芯片Ramp执行，模式修改需先断使能。</span>
       </div>

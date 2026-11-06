@@ -345,6 +345,12 @@
             let result=(||->Result<serde_json::Value,String>{
                 let v:serde_json::Value=serde_json::from_str(&line).map_err(|e|e.to_string())?;
                 let m=v["motor"].as_u64().ok_or("motor")? as u8;
+                if let Some(q)=v.get("control") {
+                    let op=q["op"].as_u64().ok_or("op")? as u8;
+                    if ![4,5].contains(&op){return Err("Only per-motor power/status bridge operations permitted".into());}
+                    let data:Vec<u8>=serde_json::from_value(q["data"].clone()).map_err(|e|e.to_string())?;
+                    return serde_json::to_value(wire.call(m,op,&data).map_err(|e|e.to_string())?).map_err(|e|e.to_string());
+                }
                 if let Some(q)=v.get("storage") {
                     let q:crate::split_storage::Request=serde_json::from_value(q.clone()).map_err(|e|e.to_string())?;
                     let b=wire.call(m,33,&crate::split_storage::encode(m,&q)?).map_err(|e|e.to_string())?;

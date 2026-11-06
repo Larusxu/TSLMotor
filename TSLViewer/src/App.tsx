@@ -1,41 +1,41 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AppProvider, useApp } from "./lib/app-store";
-import { api } from "./lib/api";
 import { BAUD_RATES } from "./lib/presets";
 import { pwmHz } from "./lib/units";
-import { ArmSwitch, Badge, Button, Icon, SelectField, Toasts } from "./components/ui";
+import { Badge, Button, Icon, SelectField, Toasts } from "./components/ui";
 import { SettingsDialog } from "./components/Settings";
 
-import MotorEnable from "./components/MotorEnable";
+import Cylinders, { CylinderToolbar } from "./pages/Cylinders";
+import { useCylinders } from "./lib/cylinder";
+import MotorToolbar from "./components/MotorToolbar";
 import HandIdentity from "./components/HandIdentity";
 import Overview from "./pages/Overview";
 import Encoder from "./pages/Encoder";
 import Homing from "./pages/Homing";
-import Axis from "./pages/Axis";
 import Tuning from "./pages/Tuning";
+import RegistersConfig from "./pages/RegistersConfig";
 import ParameterTuning from "./pages/ParameterTuning";
 import LoopTest from "./pages/LoopTest";
-import Registers from "./pages/Registers";
 import Sequence from "./pages/Sequence";
 import Logs from "./pages/Logs";
 import Storage from "./pages/Storage";
 
 type Page =
   | "overview"
+  | "cylinders"
   | "encoder"
   | "homing"
-  | "axis"
+  | "registers"
   | "autotuning"
   | "tuning"
   | "looptest"
   | "storage"
-  | "registers"
   | "sequence"
   | "logs";
 
 /** Pages that only matter while commissioning; hidden in production mode. */
-const OP_ONLY = new Set<Page>(["encoder", "homing", "axis", "tuning", "autotuning", "looptest", "storage", "registers"]);
+const OP_ONLY = new Set<Page>(["encoder", "homing", "tuning", "autotuning", "registers", "looptest", "storage"]);
 
 const NAV: {
   group: string;
@@ -45,9 +45,9 @@ const NAV: {
     group: "工作区",
     items: [
       { id: "overview", label: "运行概览", hint: "RUN", icon: <Icon.Gauge /> },
+      { id: "cylinders", label: "电缸控制", hint: "LA", icon: <Icon.Ruler /> },
       { id: "encoder", label: "编码器与对齐", hint: "SSI", icon: <Icon.Encoder /> },
       { id: "homing", label: "电机控制与找零", hint: "MOTION", icon: <Icon.Target /> },
-      { id: "axis", label: "机械行程", hint: "AXIS", icon: <Icon.Ruler /> },
     ],
   },
   {
@@ -55,9 +55,9 @@ const NAV: {
     items: [
       { id: "tuning", label: "PID 与限幅", hint: "TUNE", icon: <Icon.Tuning /> },
       { id: "autotuning", label: "参数整定", hint: "IDENT", icon: <Icon.Tuning /> },
+      { id: "registers", label: "寄存器与配置", hint: "CONFIG", icon: <Icon.Registers /> },
       { id: "looptest", label: "环路测试", hint: "LOOP", icon: <Icon.Gauge /> },
       { id: "storage", label: "板载存储", hint: "W25 / M24", icon: <Icon.Save /> },
-      { id: "registers", label: "寄存器", hint: "MAP", icon: <Icon.Registers /> },
     ],
   },
   {
@@ -70,6 +70,7 @@ const NAV: {
 ];
 
 const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
+  cylinders: { title: "电缸控制", desc: "五路独立电缸的行程、保护参数与实时状态。", crumb: "LINEAR ACTUATORS" },
   overview: {
     title: "运行概览",
     desc: "实时遥测、驱动状态与手动运行。所有数值来自芯片寄存器，不经过任何估算。",
@@ -85,16 +86,12 @@ const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
     desc: "撞限位建立行程零点。上位机下发方向、步进与工艺参数并显示状态；推进与判据在主控固件。",
     crumb: "HOMING",
   },
-  axis: {
-    title: "机械行程",
-    desc: "丝杆导程换算、软限位保护与受控运动。撞机械限位之前，先让软件把闸拉下来。",
-    crumb: "TRAVEL GUARD",
-  },
   tuning: {
     title: "PID 与限幅",
     desc: "三级级联参数、单位换算与阶跃响应实测。电流归一化选错会让增益差 256 倍。",
     crumb: "TUNING",
   },
+  registers: {title:"寄存器与配置",desc:"主控控制状态、公共配置及空白电机初始化参数。",crumb:"REGISTERS · CONFIGURATION"},
   autotuning: { title: "参数整定", desc: "TMC PRBS 系统辨识、PI计算与实机参数试用。", crumb: "PARAMETER IDENTIFICATION" },
   looptest: {
     title: "环路测试",
@@ -105,11 +102,6 @@ const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
     title: "板载存储",
     desc: "主控 W25 保存完整配置，电机 M24C02 保存编号与电角度偏移备份；保存后由主控读回校验。",
     crumb: "W25 / M24",
-  },
-  registers: {
-    title: "寄存器",
-    desc: "TMC6460 全部 189 个寄存器的读取、位编辑与快照对比。",
-    crumb: "REGISTER MAP",
   },
   sequence: {
     title: "自动测试",
@@ -125,7 +117,10 @@ const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
 
 function Shell() {
   const [page, setPage] = useState<Page>("overview");
+  const [tuningVisited, setTuningVisited] = useState(false);
+  useEffect(() => { if (page === "autotuning") setTuningVisited(true); }, [page]);
   const app = useApp();
+  const cylinders = useCylinders(app.connected, page === "cylinders" || page === "overview" || page === "registers", app.acquiring || app.streaming, app.toast);
   const [fps, setFps] = useState(0);
   const contentRef = useRef<HTMLElement | null>(null);
 
@@ -261,37 +256,6 @@ function Shell() {
 
           <div style={{ width: 1, height: 22, background: "var(--line)" }} />
 
-          <ArmSwitch armed={app.armed} onToggle={app.setArmed} disabled={!app.connected} />
-          {app.mode!=="direct" && (
-            <>
-              <div style={{ width: 86 }}>
-                <SelectField
-                  label="电机"
-                  value={app.motor}
-                  onChange={app.setMotor}
-                  disabled={app.busy || app.jobRunning}
-                  options={Array.from({ length: 16 }, (_, i) => ({ value: i + 1, label: `M${i + 1}` }))}
-                />
-              </div>
-              <MotorEnable />
-            </>
-          )}
-          <Button
-            variant="danger"
-            icon={<Icon.Stop width={13} height={13} />}
-            onClick={() => {
-              void api.emergencyStop();
-              app.clearAlignments();
-              app.setArmed(false);
-              app.toast("warn", "已请求急停；请确认运动与供电反馈");
-            }}
-            title="立即关闭 PWM 与驱动使能"
-          >
-            急停
-          </Button>
-
-          <div style={{ width: 1, height: 22, background: "var(--line)" }} />
-
           <Button
             size="sm"
             variant="ghost"
@@ -308,20 +272,23 @@ function Shell() {
           <p className="page-desc">{TITLES[page].desc}</p>
         </div>
 
+        {page === "cylinders" ? <CylinderToolbar model={cylinders}/> : page !== "registers" ? <MotorToolbar /> : null}
+
         <main className="content" ref={contentRef}>
           <div className="page-enter" key={page}>
-            {page === "overview" && <Overview />}
+            {page === "overview" && <Overview cylinders={cylinders}/>}
+            {page === "cylinders" && <Cylinders model={cylinders}/>}
             {page === "encoder" && <Encoder />}
             {page === "homing" && <Homing />}
-            {page === "axis" && <Axis />}
             {page === "tuning" && <Tuning key={app.motor} />}
-            {page === "autotuning" && <ParameterTuning key={app.motor} />}
+            {page === "registers" && <RegistersConfig cylinders={cylinders} />}
             {page === "looptest" && <LoopTest />}
             {page === "storage" && <Storage />}
-            {page === "registers" && <Registers />}
             {page === "sequence" && <Sequence />}
             {page === "logs" && <Logs />}
           </div>
+          {/* Keep the tuning session outside the keyed route: navigation must not dispose its results or running job. */}
+          {(tuningVisited || page === "autotuning") && <div key="persistent-tuning" hidden={page !== "autotuning"}><ParameterTuning key={app.motor} /></div>}
         </main>
       </div>
 

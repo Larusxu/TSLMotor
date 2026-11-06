@@ -5,6 +5,7 @@
 //! (datagram framing, RTMI parsing) away from the JS event loop.
 
 mod gateway;
+mod cylinder;
 mod axis;
 mod homing;
 mod motor_control;
@@ -78,9 +79,14 @@ fn connect(state: State<'_, AppState>, port: String, baud: u32, mode: Option<Str
 }
 
 #[tauri::command(async)]
+fn cylinder_control(state: State<'_, AppState>, channel:u8, request:cylinder::Request)->Result<cylinder::Snapshot,String> {
+    cylinder::execute(&state.link,channel,&request)
+}
+
+#[tauri::command(async)]
 fn main_control(state: State<'_, AppState>, motor:u8, op:u8, data:Vec<u8>)->Result<Vec<u8>,String> {
-    if state.busy.load(Ordering::SeqCst) && ![4,6,10,13,14,16].contains(&op) {return Err("参数应用/运动期间拒绝并发写操作".into());}
-    if state.control.active.load(Ordering::SeqCst) && ![4,6,10,13,14,16].contains(&op) {
+    if state.busy.load(Ordering::SeqCst) && ![4,5,6,10,13,14,16].contains(&op) {return Err("参数应用/运动期间拒绝并发写操作".into());}
+    if state.control.active.load(Ordering::SeqCst) && ![4,5,6,10,13,14,16].contains(&op) {
         return Err("位置控制期间禁止其它写操作，请先断使能".into());
     }
     if ![4,5,6,10,11,12,13,14,15,16].contains(&op) || motor>16 {return Err("Invalid controller operation".into());}
@@ -732,6 +738,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             main_control,
+            cylinder_control,
             motor_semantic,
             motor_storage,
             focus_motor,

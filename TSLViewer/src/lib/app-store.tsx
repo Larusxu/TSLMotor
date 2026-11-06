@@ -20,6 +20,7 @@ import { HomingNotification } from "./homing-notification";
 import { readRatedRpm, saveRatedRpm } from "./board-speed";
 import { NativeRtmi } from "./native-rtmi";
 import { acquisitionLane } from './pi-auto/acquisition';
+import { useFleet } from './fleet';
 import { applyTheme, loadSettings, saveSettings, type Settings } from "./settings";
 import { pwmHz } from "./units";
 import type { AxisState, CalibResult, JobDone, JobProgress, LinkStats, LogLine, PortInfo } from "./types";
@@ -93,6 +94,8 @@ interface AppCtx {
   updateMaximumRpm: (rpm: number) => Promise<void>;
   motorValidity: { encoder: number; homing: number; at: number } | null;
   semantic: SemanticView;
+  fleet: ReturnType<typeof useFleet>;
+  acquiring: boolean;
   motionActive: boolean;
   setMotionActive: (active: boolean) => void;
   fwVersion: string;
@@ -102,6 +105,7 @@ interface AppCtx {
   /** CHIP.ID probe state of the selected motor, shown by the top-bar enable pill. */
   motorTmc: "unknown" | "online" | "offline";
   enableMotor: () => Promise<void>;
+  disableMotor: () => Promise<void>;
   ports: PortInfo[];
   port: string;
   baud: number;
@@ -113,8 +117,6 @@ interface AppCtx {
   refreshPorts: () => Promise<void>;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
-  armed: boolean;
-  setArmed: (v: boolean) => void;
 
   cal: Cal;
   setCal: (patch: Partial<Cal>) => void;
@@ -182,6 +184,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [motorValidity,setMotorValidity]=useState<AppCtx["motorValidity"]>(null);
   const semanticSource = useRef(new SemanticStateSource());
   const [semantic, setSemantic] = useState(() => semanticSource.current.view());
+  const [acquiring, setAcquiring] = useState(acquisitionLane.busy());
+  useEffect(() => acquisitionLane.subscribe(() => setAcquiring(acquisitionLane.busy())), []);
   const [fwVersion, setFwVersion] = useState("");
   const [handId, setHandId] = useState<number | null>(null);
   const [mode, setModeState] = useState<string>(loadConnectionMode);
@@ -206,7 +210,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
   const [busy, setBusy] = useState(false);
   const [stats, setStats] = useState<LinkStats | null>(null);
-  const [armed, setArmed] = useState(false);
   const [cal, setCalState] = useState<Cal>(DEFAULT_CAL);
   const [channels, setChannels] = useState<(string | null)[]>([
     "vel_act",
@@ -313,8 +316,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [port, baud, mode, motor, toast]);
 
   const updateHandId = useCallback(async (id:number) => {
-    if(!connected || mode==="direct" || !Number.isInteger(id) || id<1 || id>65535)
-      throw new Error("HandID 必须是 1～65535 的整数，且需连接主控");
+    if(!connected || mode==="direct" || !Number.isInteger(id) || id<1 || id>1296)
+      throw new Error("手编号必须为 TS-00～TS-ZZ，且需连接主控");
     await api.mainControl(0,11,[id>>8,id&255]);
     const data=await api.mainControl(0,10,[73,1]);
     if(data.length!==2 || data[0]*256+data[1]!==id)throw new Error("HandID 读回不一致");
@@ -347,7 +350,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       /* ignore */
     }
     setConnected(false);
-    setArmed(false);
     setFwVersion("");setHandId(null);
     setAlignments({});
     setMotorTmc("unknown");
@@ -357,7 +359,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /** Gateway keeps one downstream UART focused, so switching motor is a link
    *  operation, not just local state. Capture stops and the probe resets. */
   const setMotor = useCallback((v: number) => {
-    if (v === motor || jobRunning || motionActive) return;
+    if (v === motor || jobRunning || motionActive || acquisitionLane.busy()) return;
     if (!connected || mode === "direct") {
       setMotorState(v);
       setMotorTmc("unknown");
@@ -381,20 +383,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /** Power the selected motor's logic 5V, then poll CHIP.ID until it answers. */
   const enableMotor = useCallback(async () => {
     if (!connected || busy) return;
-    if (!armed) {
-      toast("warn", "请先解锁 ARM 再上电");
-      return;
-    }
     setBusy(true);
     setMotorTmc("unknown");
     try {
       if (mode !== "direct") {
+        const current=await semanticMotion.command(motor,{kind:"get_state"});
+        if(current.motor?.logic_power&&current.motor.config_verified&&current.motor.limits_valid&&!current.pending){
+          await semanticMotion.permit(motor, true);
+          setMotorTmc("online");return;
+        }
         await stopStream();
         const ready = await semanticMotion.initialize(motor);
         if (!ready.motor?.logic_power || !ready.motor.config_verified || !ready.motor.limits_valid)
           throw Error("主控初始化尚未确认供电与配置");
         setMotorTmc("online");
-        toast("ok", `M${motor} 逻辑供电与配置已就绪，驱动保持禁能`);
+        await semanticMotion.permit(motor, true);
+        toast("ok", `M${motor} 逻辑供电与配置已就绪，可直接操作`);
         return;
       }
       const [hit] = await api.probeTmc([motor], 6);
@@ -412,7 +416,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } finally {
       setBusy(false);
     }
-  }, [connected, busy, armed, mode, motor, toast, stopStream]);
+  }, [connected, busy, mode, motor, toast, stopStream]);
+
+  const disableMotor = useCallback(async () => {
+    if(!connected||busy||mode==="direct")return;
+    setBusy(true);
+    try{
+      await stopStream();
+      await semanticMotion.powerOff(motor);
+      setMotorTmc("offline");
+      setSemantic(previous=>({...previous,receivedAt:0}));
+      toast("ok",`M${motor} 逻辑电源已关闭`);
+    }catch(e){toast("error",String(e));}
+    finally{setBusy(false);}
+  },[connected,busy,mode,motor,stopStream,toast]);
 
   const sampling = useMemo(() => {
     const f = pwmHz(cal.pwmMaxCount);
@@ -469,10 +486,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         toast("warn", "请等待当前任务结束");
         return;
       }
-      if (!armed) {
-        toast("warn", "请先解锁 ARM 再执行任务");
-        return;
-      }
       const label = JOB_LABEL[kind] ?? kind;
       jobMotor.current = motor;
       if (kind === "encoder" || kind === "calibrate" || kind === "commission") {
@@ -492,7 +505,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         toast("error", String(e));
       }
     },
-    [armed, motor, jobRunning, motionActive, toast, appendLog]
+    [motor, jobRunning, motionActive, toast, appendLog]
   );
 
   const cancel = useCallback(() => {
@@ -773,6 +786,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => semanticMotion.subscribeLog((level, message) => {
     appendLog({ts:Date.now(),level,source:"motor/command",message});
   }), [appendLog]);
+
+  // The enabled motor is usable without a separate host ARM toggle. Grant
+  // the existing MCU lease once per connection/motor/power transition, never
+  // silently undo an operator's later explicit permit cancellation.
+  useEffect(() => {
+    if (!connected || mode === "direct" || semantic.motor !== motor ||
+        !semantic.state?.logic_power || !semantic.state.config_verified || acquisitionLane.busy()) return;
+    void semanticMotion.permit(motor, true).catch(e => appendLog({ ts: Date.now(), level: "warn", source: "motor/permit", message: String(e) }));
+  }, [connected, mode, motor, semantic.motor, semantic.bootId, semantic.state?.logic_power, semantic.state?.config_verified]);
   const lastDiagnosticState = useRef<SemanticView | null>(null);
   useEffect(() => {
     const old=lastDiagnosticState.current, next=semantic;
@@ -803,7 +825,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!connected || mode === "direct") return;
     let alive = true;
     const tick = async () => {
-      if (semanticMotion.owned()) return;
+      if (semanticMotion.owned() || acquisitionLane.busy()) return;
       const state = await source.poll(motor);
       if (alive && !semanticMotion.owned()) { setSemantic(state); setMotionActive(!!state.state?.motion_active || state.state?.drive === 1); }
     };
@@ -821,7 +843,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if(!connected||mode==="direct")return;
     let alive=true,pending=false;
     const read=async()=>{
-      if(pending)return;pending=true;
+      if(pending || acquisitionLane.busy())return;pending=true;
       try {
         const r=await api.mainControl(0,10,[74,2]);
         if(r.length!==4)throw Error("标定状态寄存器长度错误");
@@ -839,14 +861,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (mode !== "direct") { setStreaming(false); scope.clear(); }
   }, [channels, connected, mode, motor, handId, semantic.bootId, scope, trace]);
 
+  const fleet = useFleet(connected, mode, streaming);
   const value: AppCtx = {
+    fleet, acquiring,
     maximumRpm, updateMaximumRpm,
     motorValidity,
     semantic,
     motionActive, setMotionActive,
     fwVersion, handId, updateHandId,
     mode, setMode, motor, setMotor,
-    motorTmc, enableMotor,
+    motorTmc, enableMotor, disableMotor,
     ports,
     port,
     baud,
@@ -858,8 +882,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshPorts,
     connect,
     disconnect,
-    armed,
-    setArmed,
     cal,
     setCal,
     scope,

@@ -1,0 +1,20 @@
+import {useEffect,useState} from "react";
+import {useApp} from "../lib/app-store";
+import {storageJob} from "../lib/split-storage";
+import {ensureSharedDefaults} from "../lib/shared-settings";
+import {semanticMotion} from "../lib/semantic-motion";
+import {archiveGroups,fieldValue,editArchive,loadArchive,saveArchive,type ArchiveDraft} from "../lib/archive-editor";
+import {Card,Button,NumField,SelectField,Badge} from "../components/ui";
+const cache=new Map<number,ArchiveDraft>();
+export default function MotorArchives(){
+ const app=useApp(),[rows,setRows]=useState(()=>new Map(cache)),[group,setGroup]=useState("运动"),[busy,setBusy]=useState(0),[notes,setNotes]=useState<Record<number,string>>({}),[confirm,setConfirm]=useState(0);
+ const note=(m:number,s:string)=>setNotes(old=>({...old,[m]:s}));
+ const update=(m:number,d:ArchiveDraft)=>{cache.set(m,d);setRows(new Map(cache));};
+ const read=async()=>{setBusy(-1);try{const defaults=await ensureSharedDefaults(),common=(await storageJob(0,1)).data;for(let m=1;m<=16;m++){try{update(m,await loadArchive(m,defaults,common));note(m,"");}catch(e){note(m,String(e));}}}catch(e){app.toast("error",String(e));}finally{setBusy(0);}};
+ useEffect(()=>{if(app.connected&&!cache.size)void read();},[app.connected]);
+ const action=async(m:number,kind:"write"|"clear"|"initialize")=>{setBusy(m);note(m,"");try{
+ if(kind==="clear"){await storageJob(m,10);const defaults=await ensureSharedDefaults(),common=(await storageJob(0,1)).data;update(m,await loadArchive(m,defaults,common));note(m,"档案已清空");}
+ else{const saved=await saveArchive(m,rows.get(m)!);update(m,saved);if(kind==="initialize"){await semanticMotion.command(m,{kind:"commission",action:1});await semanticMotion.wait(m,15000,r=>!!r.motor?.config_verified);note(m,"档案已写入，TMC 初始化完成");}else note(m,"档案已写入，TMC 保持当前配置");}
+ }catch(e){note(m,String(e));app.toast("error",`M${m} ${String(e)}`);}finally{setBusy(0);setConfirm(0);}};
+ return <Card title="电机档案 · M1–M16" right={<Button disabled={!app.connected||!!busy} size="sm" onClick={()=>void read()}>读取全部档案</Button>}><div className="row archive-group"><SelectField label="档案参数组" value={group} onChange={setGroup} options={Object.keys(archiveGroups).map(value=>({value,label:value}))}/><span className="tiny muted">编辑后按行写入 · 重新初始化将应用到对应 TMC</span></div><div className="table-scroll archive-table-scroll"><table className="table archive-table"><thead><tr><th>接口</th><th>电机编号</th>{archiveGroups[group].map(f=><th key={f.label}>{f.label}{f.unit&&<small>{f.unit}</small>}</th>)}<th>档案操作</th></tr></thead><tbody>{Array.from({length:16},(_,i)=>i+1).map(m=>{const d=rows.get(m);return <tr key={m}><td><b>M{m}</b>{d?.empty&&<Badge>空白</Badge>}</td><td>{d?<SelectField label={`M${m} 电机编号`} value={d.main[12]|d.main[13]<<8} disabled={!!busy} options={Array.from({length:17},(_,value)=>({value,label:String(value).padStart(2,"0")}))} onChange={v=>update(m,editArchive(d,{label:"电机编号",offset:12,bytes:2},v))}/>:"—"}</td>{archiveGroups[group].map(f=><td key={f.label}>{d?f.choices?<SelectField label={`M${m} ${f.label}`} value={fieldValue(d,f)} disabled={!!busy} options={f.choices.map((label,value)=>({label,value}))} onChange={v=>update(m,editArchive(d,f,v))}/>:<NumField label={`M${m} ${f.label}`} value={fieldValue(d,f)} disabled={!!busy} min={0} max={f.max} clampOnCommit={false} onChange={v=>{try{update(m,editArchive(d,f,v));note(m,"未写入");}catch(e){note(m,String(e));}}}/>:"—"}</td>)}<td><div className="row">{confirm===m?<><Button size="sm" variant="danger" disabled={!!busy} onClick={()=>void action(m,"clear")}>确认清空</Button><Button size="sm" onClick={()=>setConfirm(0)}>取消</Button></>:<><Button size="sm" disabled={!app.connected||!!busy||!d} onClick={()=>void action(m,"write")}>写入</Button><Button size="sm" disabled={!app.connected||!!busy||!d} onClick={()=>setConfirm(m)}>清空</Button><Button size="sm" disabled={!app.connected||!!busy||!d} onClick={()=>void action(m,"initialize")}>重新初始化</Button></>}</div><div className="tiny archive-note" role="status">{busy===m?"正在处理…":notes[m]}</div></td></tr>;})}</tbody></table></div></Card>;
+}

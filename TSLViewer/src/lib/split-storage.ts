@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "./api";
 
 export type StorageReply = {
   id: number; phase: number; result: number; motor: number; operation: number;
@@ -11,15 +11,20 @@ function nextId() {
   return lastId;
 }
 async function send(motor: number, operation: number, id: number, offset = 0, data: number[] = []) {
-  return invoke<StorageReply>("motor_storage", { motor, request: { id, operation, offset, data } });
+  return invokeCommand<StorageReply>("motor_storage", { motor, request: { id, operation, offset, data } });
 }
 const errors: Record<number, string> = {
   [-2]: "通信超时", [-4]: "没有有效档案或备份", [-6]: "参数或身份绑定不匹配",
   [-7]: "存储或共享总线忙，请稍后重试", [-8]: "存储读写或恢复失败", [-10]: "存储设备未就绪",
 };
-export async function storageJob(motor: number, operation: 1 | 3 | 4 | 5, payload?: number[]) {
+export class StorageError extends Error {
+  constructor(public readonly result: number, public readonly flags: number) {
+    super(`${errors[result] ?? "主控拒绝操作"} (${result})；恢复标志=${flags}`);
+  }
+}
+async function executeStorageJob(motor: number, operation: 1 | 3 | 4 | 5 | 7 | 8 | 9 | 10 | 11, payload?: number[]) {
   const id = nextId();
-  if (operation === 3) {
+  if (operation === 3 || operation === 8 || operation === 11) {
     if (!payload || payload.length !== 128) throw new Error("W25 档案必须是 128 字节 ENC1/ENC2/MTR1 记录");
     for (const offset of [0, 106]) {
       const r = await send(motor, 2, id, offset, payload.slice(offset, offset + 106));
@@ -34,7 +39,7 @@ export async function storageJob(motor: number, operation: 1 | 3 | 4 | 5, payloa
     r = await send(motor, 6, id);
   }
   if (r.result || r.phase !== 4) {
-    throw new Error(`${errors[r.result] ?? "主控拒绝操作"} (${r.result})；恢复标志=${r.flags}`);
+    throw new StorageError(r.result, r.flags);
   }
   const tail = await send(motor, 6, id, 106);
   if (tail.result || tail.phase !== 4 || tail.generation !== r.generation || tail.hand_id !== r.hand_id ||
@@ -52,8 +57,15 @@ export function decodeBackup(data: number[], hand: number, motor: number) {
     for (let i = 0; i < 8; i++) crc = ((crc << 1) ^ ((crc & 0x8000) ? 0x1021 : 0)) & 0xffff;
   }
   if (data[0] !== 0x4d || data[1] !== 1 || data[2] !== motor || data[3] !== 1 ||
-      (data[4] | data[5] << 8) !== hand || crc !== (data[12] | data[13] << 8) ||
+      (data[4] | data[5] << 8) === 0 || crc !== (data[12] | data[13] << 8) ||
       data[14] !== 0xa5 || data[15] !== 0x5a) throw new Error("备份格式、CRC 或编号不匹配");
   return { handId: hand, motor, offset: data[6] | data[7] << 8,
     generation: new DataView(Uint8Array.from(data.slice(8, 12)).buffer).getUint32(0, true) };
+}
+
+// The MCU exposes one staged storage job. Serialize callers across pages.
+let storageQueue: Promise<unknown> = Promise.resolve();
+export function storageJob(motor:number,operation:1|3|4|5|7|8|9|10|11,payload?:number[]) {
+ const job=storageQueue.then(()=>executeStorageJob(motor,operation,payload));
+ storageQueue=job.catch(()=>{});return job;
 }

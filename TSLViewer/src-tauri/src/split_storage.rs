@@ -14,12 +14,13 @@ pub struct Response {
     pub flags: u8, pub offset: u8, pub data: Vec<u8>,
 }
 pub fn encode(motor:u8, q:&Request)->Result<Vec<u8>,String> {
-    if motor>16 || q.id==0 || !(1..=6).contains(&q.operation) ||
+    if motor>16 || q.id==0 || !(1..=11).contains(&q.operation) ||
        q.offset>128 || q.data.len()>106 || q.offset as usize+q.data.len()>128 ||
        (q.operation==2 && q.data.is_empty()) ||
        (q.operation!=2 && !q.data.is_empty()) ||
        (![2,6].contains(&q.operation) && q.offset!=0) ||
-       ([4,5].contains(&q.operation) && motor==0) {
+       ([4,5,9,10,11].contains(&q.operation) && motor==0) ||
+       ([7,8].contains(&q.operation) && motor!=0) {
         return Err("Invalid split-storage request".into());
     }
     let mut p=vec![1,q.operation]; p.extend(q.id.to_le_bytes());
@@ -34,7 +35,7 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String> {
     }
     let id=u32::from_le_bytes(p[2..6].try_into().unwrap());
     let result=i32::from_le_bytes(p[6..10].try_into().unwrap());
-    if id!=q.id || p[10]!=motor || p[11]<1 || p[11]>5 ||
+    if id!=q.id || p[10]!=motor || p[11]<1 || p[11]>11 ||
        (q.operation!=6 && p[11]!=q.operation) {
         return Err(format!("Storage rejected or stale response (result={result}); read device status before resubmitting"));
     }

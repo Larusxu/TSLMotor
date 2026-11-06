@@ -151,10 +151,9 @@ export function bin(v: number, width = 32): string {
   return (v >>> 0).toString(2).padStart(width, "0");
 }
 
-/** Die temperature raw → °C. The datasheet only publishes a 12-bit ADC; the
- * 16-bit field is left-shifted, so 1 LSB ≈ 1/16 °C once calibrated. */
+/** TMC6460 Rev.0 p56: signed TEMP_INT is the high half of ADC.TEMP_RAW. */
 export function tempC(raw: number, offset = 0): number {
-  return s16(raw) / 16 + offset;
+  return (s16hi(raw) * 1.25 / 32768 - 0.622) * 1250 / 3 + offset;
 }
 
 /** MT6701 SSI CRC-6, polynomial x^6 + x + 1, over D[13:0] + Mg[3:0]. */

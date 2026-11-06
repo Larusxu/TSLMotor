@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "./api";
 
 export interface DeviceState {
   capabilities: number; motors: number; source: number; active_motor: number;
@@ -16,6 +16,7 @@ export interface MotorState {
   arrival_phase?: number | null; arrival_flags?: number | null; arrival_ms?: number | null;
   arrival_tolerance?: number | null; arrival_dwell_ms?: number | null;
   logical_position?: string | null; logical_span?: string | null; margin_counts?: number | null; coordinate_valid?: boolean;
+  temperature_raw?: number | null;
 }
 export interface SemanticReply {
   protocol_version: number; operation: number; request_id: number; boot_id: string;
@@ -35,7 +36,7 @@ let encoderSequence = 0;
 /** Passive encoder cache query: opening the page must not claim a motor session. */
 export async function readEncoderSnapshot(motor: number): Promise<SemanticReply> {
   const request_id = ++encoderSequence;
-  const reply = await invoke<SemanticReply>("motor_semantic", { motor, request: {
+  const reply = await invokeCommand<SemanticReply>("motor_semantic", { motor, request: {
     request_id, boot_id: "0", session_id: 0, task_id: 0, command: { kind: "encoder_state" },
   } });
   if (reply.request_id !== request_id || reply.protocol_version !== 2 || reply.operation !== 1 || reply.result || reply.replayed)
@@ -43,7 +44,7 @@ export async function readEncoderSnapshot(motor: number): Promise<SemanticReply>
   return reply;
 }
 async function read(motor: number, id: number): Promise<SemanticReply> {
-  const request = async (kind: string) => invoke<SemanticReply>("motor_semantic", { motor, request: {
+  const request = async (kind: string) => invokeCommand<SemanticReply>("motor_semantic", { motor, request: {
     request_id: id, boot_id: "0", session_id: 0, task_id: 0, command: { kind },
   } });
   const result = await request(motor ? "position_state" : "get_state");

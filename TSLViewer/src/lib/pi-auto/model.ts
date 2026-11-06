@@ -9,11 +9,19 @@ export function trialCoefficients(original:number[],loop:Loop,p:number,i:number,
   return next;
 }
 export interface Sample { at:number; reference:number; actual:number; effort:number }
+export interface CaptureDiagnostic {status:number;packedCurrent:number;delta:number;travel:number;elapsedMs:number;peakCurrent:number;adcStatus:number}
 export interface Capture {
+  diagnostic?:CaptureDiagnostic;
   appliedAmplitude?:number; attempts?:number;
   state:number; motor:number; loop:Loop; generation:number; count:number; error:number;
   sampleHz:number; pidConfig:number; pwmHz:number; velocityHz:number; coefficient:number;
   velocityLimit:number; currentLimits:number; events:number; cursor:number; samples:Sample[]; coefficients:number[];
+}
+export function decodeCaptureDiagnostic(bytes:number[]):CaptureDiagnostic|undefined {
+  if(bytes.length!==96)return;
+  const d=new DataView(Uint8Array.from(bytes).buffer),u=(i:number)=>d.getUint32(i,true);
+  if(u(48)!==0xfffffffe||u(64)!==0x31444950)return;
+  return {status:u(68),packedCurrent:u(72),delta:d.getInt32(76,true),travel:u(80),elapsedMs:u(84),peakCurrent:u(88),adcStatus:u(92)};
 }
 export function decodeCapture(bytes:number[]):Capture {
   if(bytes.length<64||bytes.length>100||(bytes.length-64)%16||bytes[0]!==1||bytes[1]>3||bytes[2]>16||bytes[3]>3)
@@ -27,6 +35,14 @@ export function decodeCapture(bytes:number[]):Capture {
     samples:Array.from({length:(bytes.length-64)/16},(_,i)=>({at:u(64+16*i),reference:d.getInt32(68+16*i,true),actual:d.getInt32(72+16*i,true),effort:d.getInt32(76+16*i,true)}))};
 }
 export interface Model { a:number; b:number; fit:number; validationFit:number; tauSeconds:number|null; dcGain:number|null }
+/** Dense pages repeat identity/cursor only; terminal metadata stays in the first snapshot. */
+export function decodeCapturePage(bytes:number[],terminal:Capture):Capture {
+  if(bytes[0]!==2)return decodeCapture(bytes);
+  if(bytes.length<16||bytes.length>96||(bytes.length-16)%16)throw Error('辨识样本页长度错误');
+  const d=new DataView(Uint8Array.from(bytes).buffer),u=(i:number)=>d.getUint32(i,true);
+  if(bytes[1]!==terminal.state||bytes[2]!==terminal.motor||bytes[3]!==terminal.loop||u(4)!==terminal.generation||u(8)!==terminal.count||u(12)>terminal.count)throw Error('辨识样本页身份已改变');
+  return {...terminal,cursor:u(12),samples:Array.from({length:(bytes.length-16)/16},(_,i)=>({at:u(16+16*i),reference:d.getInt32(20+16*i,true),actual:d.getInt32(24+16*i,true),effort:d.getInt32(28+16*i,true)}))};
+}
 export interface Candidate { p:number; i:number; kp:number; kiPerSecond:number; bandwidthHz:number; method?:'plant'|'frequency'|'measured-search'; model:Model; warnings:string[] }
 const average=(a:number[])=>a.reduce((x,y)=>x+y,0)/a.length;
 /** Instrumental-variable ARX(1,1). Reference PRBS instruments separate the

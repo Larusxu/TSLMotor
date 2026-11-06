@@ -2,7 +2,7 @@ import { semanticMotion } from "./semantic-motion";
 import type { SemanticReply } from "./semantic-state";
 
 export type AlignmentPlan = {
-  scanDegrees: number; stepDegrees: number; settleMs: number; currentMa: number; clearance: boolean;
+  scanDegrees: number; stepDegrees: number; settleMs: number; currentMa: number;
 };
 /** One MCU commissioning owner. The PC renews permission but never emits a
  * position trajectory or marks configuration/calibration successful itself. */
@@ -16,7 +16,7 @@ class CommissionService {
     try {
       await semanticMotion.permit(motor, true);
       update(await semanticMotion.command(motor, { kind: "alignment", scan_degrees: plan.scanDegrees,
-        step_degrees: plan.stepDegrees, settle_ms: plan.settleMs, current_ma: plan.currentMa, clearance: plan.clearance }));
+        step_degrees: plan.stepDegrees, settle_ms: plan.settleMs, current_ma: plan.currentMa }));
       const deadline = Date.now() + 150000;
       for (;;) {
         await new Promise(resolve => setTimeout(resolve, 150));
@@ -37,9 +37,3 @@ class CommissionService {
 }
 export const semanticCommission = new CommissionService();
 
-export function alignmentRetreatDegrees(scanDegrees: number, poles: number) {
-  if (!Number.isInteger(scanDegrees) || scanDegrees < 360 || scanDegrees > 1080 ||
-      !Number.isInteger(poles) || poles < 1 || poles > 127) throw new Error("扫描角度或极对数无效");
-  const mechanical = Math.ceil(scanDegrees / poles);
-  return mechanical + Math.max(180, Math.ceil(mechanical / 4));
-}

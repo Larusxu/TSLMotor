@@ -6,11 +6,22 @@ import type { ControlConfig } from "./motor-control";
 
 /** Edits only. Verified register/profile ownership is in the Rust ParameterBank.
  * Per-motor drafts survive page navigation; never restored/enabled on a chip automatically. */
-interface Draft { pid: PidCfgPayload; task: ControlConfig }
+import { DEFAULT_RAMP, type RampConfig } from "./motor-ramp";
+interface Draft { pid: PidCfgPayload; task: ControlConfig; ramp:RampConfig }
 const drafts = new Map<number, Draft>();
 const listeners = new Set<() => void>();
+/** Copy PI tuning fields only; verified physical readback must never quantize limit inputs. */
+export function mergePiTuning(draft: PidCfgPayload, actual: PidCfgPayload): PidCfgPayload {
+  const next={...draft};
+  const keys=['flux_p','flux_i','torque_p','torque_i','vel_p','vel_i','pos_p','pos_i',
+    'cur_norm_p','cur_norm_i','vel_norm_p','vel_norm_i','pos_norm_p','pos_norm_i',
+    'vel_shift','pos_sampling','overwrite_target','keep_pos_target'] as const;
+  for(const key of keys)Object.assign(next,{[key]:actual[key]});
+  return next;
+}
 function get(motor: number): Draft {
   if (!drafts.has(motor)) drafts.set(motor, {
+    ramp:{...DEFAULT_RAMP},
     pid: { flux_p: p.pid.curP, flux_i: p.pid.curI, torque_p: p.pid.curP, torque_i: p.pid.curI,
       vel_p: p.pid.velP, vel_i: p.pid.velI, pos_p: p.pid.posP, pos_i: p.pid.posI,
       cur_norm_p: 1, cur_norm_i: 1, vel_norm_p: 1, vel_norm_i: 1, pos_norm_p: 1, pos_norm_i: 1,
@@ -18,9 +29,9 @@ function get(motor: number): Draft {
       torque_limit_ma: p.limits.torqueMa, flux_limit_ma: p.limits.fluxMa,
       vel_limit_rpm: p.limits.velRpm, velocity_mode_limit_rpm:28730, uq_ud_limit: p.limits.uqUd,
       ma_per_count: MA_PER_COUNT, counts_per_rpm: 1099511627776 / 3600000000 },
-    task: { motor, poles: 1, min_deg: 0, max_deg: 54600, max_rpm: 2000, limit_ma: 500, trip_ma: 600,
+    task: { motor, poles: 1, min_deg: 0, max_deg: 54600, max_rpm: 15000, limit_ma: 1000, trip_ma: 1000,
       trajectory: true, duration_ms: 2000, accel_deg_s2: 6000, decel_deg_s2: 6000,
-      mode: "position_ramp", planning: "limits", over_ms: 180, sample_ms: 60, comm_timeout_ms: 1000, fault_action: "disable" },
+      mode: "position_direct", planning: "limits", over_ms: 180, sample_ms: 60, comm_timeout_ms: 1000, fault_action: "disable" },
   });
   return drafts.get(motor)!;
 }
@@ -35,5 +46,6 @@ export function useMotorConfiguration(motor: number) {
     listeners.forEach(cb => cb());
   };
   return { ...draft, setPid: (value: Draft["pid"] | ((p: Draft["pid"]) => Draft["pid"])) => update("pid", value),
+    setRamp: (value: Draft["ramp"] | ((p: Draft["ramp"]) => Draft["ramp"])) => update("ramp", value),
     setTask: (value: Draft["task"] | ((p: Draft["task"]) => Draft["task"])) => update("task", value) };
 }

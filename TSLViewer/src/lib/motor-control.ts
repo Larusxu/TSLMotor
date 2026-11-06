@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "./api";
 
 /** Mechanism sign, shared by homing, goals and feedback. Wire protocol is unchanged. */
 export const MECHANISM_SIGN = -1;
@@ -28,7 +28,7 @@ export interface ControlCommand {
   target: number; b: number; amplitude: number; period_s: number; cycles: number; rpm: number;
 }
 async function real<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  return invoke<T>(command, args);
+  return invokeCommand<T>(command, args);
 }
 export const controlApi = {
   start: (cfg: ControlConfig) => real<void>("motor_control_start", { cfg }),
