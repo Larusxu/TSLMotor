@@ -1976,7 +1976,7 @@ select optgroup {
 @media(min-width:1820px) {
   .homing-telemetry-grid { grid-template-columns:repeat(8,minmax(0,1fr)); }
   .homing-telemetry-grid .stat-value { font-size:19px; }
-  .homing-state-line { justify-content:space-between; }
+  .homing-state-line { justify-content:flex-start; }
 }
 @media(max-width:850px) {
   .homing-dashboard { position:relative; top:auto; }
