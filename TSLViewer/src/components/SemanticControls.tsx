@@ -15,8 +15,10 @@ export function SemanticControls({ children }: { children: ReactNode }) {
   const s = app.connected && app.semantic.motor === app.motor && semanticFresh(app.semantic) ? app.semantic.state : null;
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [holding, setHolding] = useState(false);
-  const [percent, setPercent] = useState(50);
-  const percentRef = useRef(50), targetEdited = useRef(false);
+  const percent = app.positionTargetPercent;
+  const setPercent = app.setPositionTargetPercent;
+  const percentRef = useRef(percent), targetEdited = useRef(false);
+  percentRef.current=percent;
   const setTarget = (value:number) => { percentRef.current=value; targetEdited.current=true; setPercent(value); };
   const sliderChange = useRef<(value:number)=>void>(()=>{});
   const percentLimit = useRef<(value:number)=>void>(()=>{});
