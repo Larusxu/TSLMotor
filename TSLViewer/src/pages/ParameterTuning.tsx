@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useApp } from "../lib/app-store";
 import { useMotorConfiguration, mergePiTuning } from "../lib/motor-configuration";
 import { piAuto, type IdentificationOptions } from "../lib/pi-auto/service";
@@ -28,6 +29,8 @@ export default function ParameterTuning(){
   const [busy,setBusy]=useState(false),[running,setRunning]=useState(false),[trial,setTrial]=useState(false),[message,setMessage]=useState("");
   const [lowRpm,setLowRpm]=useState(500),[highRpm,setHighRpm]=useState(15000),[endpoint,setEndpoint]=useState<EndpointResult|null>(null);
   const [endpointRunning,setEndpointRunning]=useState(false);
+  const [endpointHost,setEndpointHost]=useState<HTMLElement|null>(null);
+  useEffect(()=>{setEndpointHost(document.getElementById("pi-endpoint-slot"));},[app.mode,app.motor]);
   const mounted=useRef(true);
   const loopSettings=useRef<Partial<Record<Loop,{options:IdentificationOptions;bandwidthHz:number;amplitude:number}>>>({});
   const rememberLoop=()=>{loopSettings.current[loop]={options:{loop,amplitude:rawAmplitude(loop,amplitude),durationMs:Math.round(duration*1000),travelCounts:1,sampling,excitationSampling:excitation},bandwidthHz:bandwidth,amplitude};};
@@ -70,8 +73,7 @@ export default function ParameterTuning(){
   const points=capture?.samples??[];
   const response=useMemo(()=>{try{return capture?.state===2?spectrum(capture):null;}catch{return null;}},[capture]);
   return <div className="pi-auto stack pi-merged-ident">
-    <div className="pi-merged-section-title">参数整定</div>
-    <div className="grid split-2-1 pi-ident-result-row">
+    <div className="grid pi-ident-result-row">
       <Card className="pi-ident-card" title="系统辨识" right={<Badge>TMC PRBS</Badge>}>
         <div className="stack"><div className="pi-ident-status" aria-live="polite">
   <div><span className="tiny muted">整定状态</span><strong>{running?(endpointRunning?"正在末段优化":view.progress?.phase==='downloading'?"正在读取采样":"正在辨识"):capture?states[capture.state]:"待开始"}</strong></div>
@@ -90,21 +92,31 @@ export default function ParameterTuning(){
             <Field label="PRBS 激励分频" hint="PWM / (N+1)"><NumField value={excitation} onChange={setExcitation} min={0} max={255} disabled={busy} width="100%"/></Field>
           </div></details>
           <Check checked={shared} onChange={v=>{if(!busy)setShared(v);}}>电流环 Id / Iq 使用同一份 PI 参数</Check>
-          <div className="row-wrap">
+          <div className="row-wrap pi-ident-actions">
             <Button variant="primary" disabled={!app.connected||busy} onClick={autoStart} icon={<Icon.Sequence/>}>单环整定</Button>
             <Button disabled={!app.connected||busy} onClick={sequenceStart}>三环整定</Button>
             <Button variant="danger" disabled={!running} onClick={()=>void piAuto.cancel().catch(e=>setMessage(String(e)))} icon={<Icon.Stop/>}>停止</Button>
           </div>
         </div>
       </Card>
-    <Card title="整定结果" right={<Badge>自动试用并回读 → 保存</Badge>}>
+    <Card className="pi-result-card" title="整定结果" right={<Badge>自动试用并回读 → 保存</Badge>}>
       <div className="pi-auto-result">
         <div><span className="tiny muted">{names[resultLoop]} P</span><strong>{candidate?.p??"—"}</strong></div>
         <div><span className="tiny muted">{names[resultLoop]} I</span><strong>{candidate?.i??"—"}</strong></div>
         <div><span className="tiny muted">频域相干度</span><strong>{candidate?`${(candidate.model.validationFit*100).toFixed(1)}%`:"—"}</strong></div>
-        <div><span className="tiny muted">整定行程范围</span><strong>{`${selectedRange[0]}%–${selectedRange[1]}%`}</strong></div>
       </div>
-      {results.length>0&&<table className="table" style={{width:"100%",marginTop:16}}><thead><tr><th>控制环</th><th>P</th><th>I</th><th>结果</th></tr></thead><tbody>{results.map(r=><tr key={r.loop}><td>{names[r.loop]}</td><td>{r.p}</td><td>{r.i}</td><td>{r.improved?'已改善并应用':'保留起始参数'}</td></tr>)}</tbody></table>}
+      <div className="pi-result-table-wrap"><table className="table pi-result-table">
+        <thead><tr><th>控制环</th><th>P</th><th>I</th><th>结果</th></tr></thead>
+        <tbody>{([0,1,2,3] as Loop[]).map(k=>{
+          const v=results.find(item=>item.loop===k);
+          const current=k===resultLoop?candidate:null;
+          return <tr key={k}><td>{names[k]}</td>
+            <td className="mono">{v?.p??current?.p??"—"}</td>
+            <td className="mono">{v?.i??current?.i??"—"}</td>
+            <td>{v?(v.improved?"已改善并应用":"保留起始参数"):current?"候选参数":"—"}</td>
+          </tr>;
+        })}</tbody>
+      </table></div>
       <div className="row-wrap" style={{marginTop:16}}>
         <Button variant="primary" disabled={busy||!candidate||!app.connected} onClick={()=>void run(async()=>{
           const p=await piAuto.tryResult(app.motor,resultLoop,candidate!.p,candidate!.i,shared,draft.pid);draft.setPid(old=>mergePiTuning(old,p));
@@ -120,11 +132,29 @@ export default function ParameterTuning(){
       <Card title="辨识响应" right={<Badge>{capture?.state===3?'停止现场 · ':''}{points.length} / {capture?.count??0} 组</Badge>}>
         <div className="pi-auto-message" role="status" aria-live="polite">{message||'自动整定包含多轮候选比较与重复验证，每轮结果会保留。'}</div>
         {running&&view.progress&&<div className="tiny muted">{view.progress.phase==='downloading'?`读取采样 ${view.progress.received} / ${view.progress.capture.count} 组` : view.progress.phase==='capturing'?`采集中 · ${view.progress.capture.sampleHz.toFixed(2)} Hz`:'本轮已完成'}{capture&&view.progress.phase!=='complete'?'；下方保留上一轮完整波形':''}</div>}
-        {points.length&&capture?<IdentificationWaveform capture={capture}/>:<div className="pi-auto-wave"><div className="pi-auto-empty"><Icon.Gauge width={32} height={32}/><span>完成采集后显示实际响应</span><span className="tiny muted">可选择时间窗口并移动查看原始波形</span></div></div>}
+        {points.length&&capture?<IdentificationWaveform capture={capture}/>:<div className="pi-auto-wave pi-response-empty-chart" role="img" aria-label="尚未采样的辨识响应空坐标系">
+          <svg viewBox="0 0 800 210" preserveAspectRatio="xMidYMid meet">
+            {[0,.25,.5,.75,1].map(v=><g key={v}>
+              <line x1="65" y1={175-v*145} x2="770" y2={175-v*145} stroke="var(--line)" />
+              <text x="54" y={179-v*145} textAnchor="end" fontSize="11" fill="var(--text-4)">{v.toFixed(2)}</text>
+            </g>)}
+            {[0,.25,.5,.75,1].map(v=><g key={v}>
+              <line x1={65+705*v} y1="30" x2={65+705*v} y2="175" stroke="var(--line)" strokeDasharray="3 5" />
+              <text x={65+705*v} y="197" textAnchor="middle" fontSize="11" fill="var(--text-4)">{v.toFixed(2)}</text>
+            </g>)}
+            <text x="415" y="117" fontSize="13" textAnchor="middle" fill="var(--text-4)">等待采样</text>
+            <text x="770" y="208" fontSize="10" textAnchor="end" fill="var(--text-4)">时间 (s) · 示意坐标</text>
+          </svg>
+        </div>}
         <div className="row-wrap tiny"><span style={{color:"var(--warn)"}}>-- PRBS参考</span><span style={{color:"var(--accent)"}}>— 实际反馈</span><span className="muted">{names[selected]}</span></div>
         {capture?.appliedAmplitude!==undefined&&<div className="tiny muted">本轮实际激励：{amplitudeText(capture.loop,capture.appliedAmplitude)} · TMC {capture.loop===0?'Id':'Iq'}上限：{amplitudeText(1,capture.loop===0?capture.currentLimits&32767:capture.currentLimits>>>16&32767)}{capture.state===3?' · 中止数据仅用于排障，不能作为完整辨识结果':''}</div>}
         {capture?.diagnostic&&<div className="tiny muted">{diagnosticText(capture)}</div>}
-        <KV rows={[["电流 / 速度 / 位置环执行频率",capture?`${capture.pwmHz} / ${capture.velocityHz} / ${(capture.velocityHz/(((capture.pidConfig>>>16)&127)+1)).toFixed(0)} Hz`:"—"],["参考/反馈相干度",response?`${(response.coherence*100).toFixed(1)}%`:"—"],["实测闭环 -3dB 带宽",response?.bandwidthHz?`${response.bandwidthHz.toFixed(1)} Hz`:"尚未可靠测出"],["UART新增事件",capture?`0x${capture.events.toString(16).toUpperCase()}`:"—"]]}/>
+        <div className="pi-response-stats">
+          <div><span>电流 / 速度 / 位置环执行频率</span><b>{capture?`${capture.pwmHz} / ${capture.velocityHz} / ${(capture.velocityHz/(((capture.pidConfig>>>16)&127)+1)).toFixed(0)} Hz`:"—"}</b></div>
+          <div><span>参考/反馈相干度</span><b>{response?`${(response.coherence*100).toFixed(1)}%`:"—"}</b></div>
+          <div><span>实测闭环 -3dB 带宽</span><b>{response?.bandwidthHz?`${response.bandwidthHz.toFixed(1)} Hz`:"尚未可靠测出"}</b></div>
+          <div><span>UART新增事件</span><b>{capture?`0x${capture.events.toString(16).toUpperCase()}`:"—"}</b></div>
+        </div>
         <div className="tiny muted">执行频率表示控制器多久运算一次；闭环带宽表示能跟踪多快的变化，两者不是同一个数值。2431 的 R/L 可作校核，不能用相间参数直接代替 d/q 模型。</div>
       </Card>
     </div>
@@ -133,7 +163,8 @@ export default function ParameterTuning(){
       <div className="tiny muted">每轮候选写入TMC后采集，评分不达标仍保留数据。历史波形不代表当前硬件参数，试用时会核对实际PI。</div>
     </Card>}
 
-    <Card title="位置直通末段优化" right={<Badge>低 / 中 / 高速对照</Badge>}>
+    {endpointHost&&createPortal(
+<Card title="位置直通末段优化" right={<Badge>低 / 中 / 高速对照</Badge>}>
       <div className="stack">
         <div className="tiny muted">在40% → 60% → 50%行程往复，比较低、中、高速的超调与回拉，在本批最佳组合上继续优化速度环与位置环P/I。结果仅试用，不保存W25。</div>
         <div className="pi-auto-fields">
@@ -158,5 +189,6 @@ export default function ParameterTuning(){
         <div className="tiny muted">评分同时考虑末10%及稳定时间、总耗时、速度峰值和位置超调；更快但超调明显的组合不会仅凭到位速度入选。末10%包含剩余行程的正常运行时间，低速数值大不等于减速拖尾。采样峰值不等于连续时间最大值。结束后PWM关闭，恢复原模式和档案任务转速。</div>
       </div>
     </Card>
+    ,endpointHost)}
   </div>;
 }
