@@ -69,16 +69,15 @@ export default function ParameterTuning(){
   const selected=capture?.loop??loop;
   const points=capture?.samples??[];
   const response=useMemo(()=>{try{return capture?.state===2?spectrum(capture):null;}catch{return null;}},[capture]);
-  return <div className="pi-auto stack">
-    <div className="pi-auto-summary" aria-live="polite">
-      <div><span className="tiny muted">当前电机</span><strong>M{app.motor}</strong></div>
-      <div><span className="tiny muted">整定状态</span><strong>{running?(endpointRunning?"正在末段优化":view.progress?.phase==='downloading'?"正在读取采样":"正在辨识"):capture?states[capture.state]:"待开始"}</strong></div>
-      <div><span className="tiny muted">实际采样</span><strong>{currentSampling?`${currentSampling.toFixed(2)} Hz`:"—"}</strong></div>
-      <div><span className="tiny muted">参数状态</span><strong>{running?"整定中 · W25未保存":trial?"TMC试用 · 未保存":"原配置保持"}</strong></div>
-    </div>
-    <div className="pi-auto-grid">
-      <Card title="系统辨识" right={<Badge>TMC PRBS</Badge>}>
-        <div className="stack">
+  return <div className="pi-auto stack pi-merged-ident">
+    <div className="pi-merged-section-title">参数整定</div>
+    <div className="grid split-2-1 pi-ident-result-row">
+      <Card className="pi-ident-card" title="系统辨识" right={<Badge>TMC PRBS</Badge>}>
+        <div className="stack"><div className="pi-ident-status" aria-live="polite">
+  <div><span className="tiny muted">整定状态</span><strong>{running?(endpointRunning?"正在末段优化":view.progress?.phase==='downloading'?"正在读取采样":"正在辨识"):capture?states[capture.state]:"待开始"}</strong></div>
+  <div><span className="tiny muted">实际采样率</span><strong>{currentSampling?`${currentSampling.toFixed(2)} Hz`:"—"}</strong></div>
+  <div><span className="tiny muted">参数状态</span><strong>{running?"整定中 · W25未保存":trial?"TMC试用 · 未保存":"原配置保持"}</strong></div>
+</div>
           <Field label="辨识对象" hint="芯片内部激励"><SelectField value={loop} onChange={v=>changeLoop(Number(v) as Loop)} options={names.map((label,value)=>({label,value}))} disabled={busy} width="100%"/></Field>
           <div className="pi-auto-fields">
             <Field label="激励幅值" hint={loop<2?"mA":loop===2?"rpm":"电机端 °"}><NumField value={amplitude} onChange={setAmplitude} min={1} disabled={busy} width="100%"/></Field>
@@ -98,21 +97,6 @@ export default function ParameterTuning(){
           </div>
         </div>
       </Card>
-      <Card title="辨识响应" right={<Badge>{capture?.state===3?'停止现场 · ':''}{points.length} / {capture?.count??0} 组</Badge>}>
-        <div className="pi-auto-message" role="status" aria-live="polite">{message||'自动整定包含多轮候选比较与重复验证，每轮结果会保留。'}</div>
-        {running&&view.progress&&<div className="tiny muted">{view.progress.phase==='downloading'?`读取采样 ${view.progress.received} / ${view.progress.capture.count} 组` : view.progress.phase==='capturing'?`采集中 · ${view.progress.capture.sampleHz.toFixed(2)} Hz`:'本轮已完成'}{capture&&view.progress.phase!=='complete'?'；下方保留上一轮完整波形':''}</div>}
-        {points.length&&capture?<IdentificationWaveform capture={capture}/>:<div className="pi-auto-wave"><div className="pi-auto-empty"><Icon.Gauge width={32} height={32}/><span>完成采集后显示实际响应</span><span className="tiny muted">可选择时间窗口并移动查看原始波形</span></div></div>}
-        <div className="row-wrap tiny"><span style={{color:"var(--warn)"}}>-- PRBS参考</span><span style={{color:"var(--accent)"}}>— 实际反馈</span><span className="muted">{names[selected]}</span></div>
-        {capture?.appliedAmplitude!==undefined&&<div className="tiny muted">本轮实际激励：{amplitudeText(capture.loop,capture.appliedAmplitude)} · TMC {capture.loop===0?'Id':'Iq'}上限：{amplitudeText(1,capture.loop===0?capture.currentLimits&32767:capture.currentLimits>>>16&32767)}{capture.state===3?' · 中止数据仅用于排障，不能作为完整辨识结果':''}</div>}
-        {capture?.diagnostic&&<div className="tiny muted">{diagnosticText(capture)}</div>}
-        <KV rows={[["电流 / 速度 / 位置环执行频率",capture?`${capture.pwmHz} / ${capture.velocityHz} / ${(capture.velocityHz/(((capture.pidConfig>>>16)&127)+1)).toFixed(0)} Hz`:"—"],["参考/反馈相干度",response?`${(response.coherence*100).toFixed(1)}%`:"—"],["实测闭环 -3dB 带宽",response?.bandwidthHz?`${response.bandwidthHz.toFixed(1)} Hz`:"尚未可靠测出"],["UART新增事件",capture?`0x${capture.events.toString(16).toUpperCase()}`:"—"]]}/>
-        <div className="tiny muted">执行频率表示控制器多久运算一次；闭环带宽表示能跟踪多快的变化，两者不是同一个数值。2431 的 R/L 可作校核，不能用相间参数直接代替 d/q 模型。</div>
-      </Card>
-    </div>
-    {history.length>0&&<Card title="已完成轮次" right={<Badge>{history.length} 轮 · 点击查看波形</Badge>}>
-      <div style={{maxHeight:260,overflow:'auto'}}><table className="table" style={{width:'100%',textAlign:'left'}}><thead><tr><th>环 / 轮次</th><th>P / I</th><th>评分（低为优）</th><th title="反馈绝对峰值 ÷ PRBS参考幅值，无单位">响应峰值 / 激励幅值</th><th>波形</th></tr></thead><tbody>{history.map(({trial:t,round},i)=><tr key={i}><td>{names[t.capture.loop]} / {round}</td><td>{t.p} / {t.i}</td><td>{t.score.toFixed(4)}</td><td>{t.peak.toFixed(2)}</td><td><Button disabled={busy} onClick={()=>{setCapture(t.capture);}}>查看</Button></td></tr>)}</tbody></table></div>
-      <div className="tiny muted">每轮候选写入TMC后采集，评分不达标仍保留数据。历史波形不代表当前硬件参数，试用时会核对实际PI。</div>
-    </Card>}
     <Card title="整定结果" right={<Badge>自动试用并回读 → 保存</Badge>}>
       <div className="pi-auto-result">
         <div><span className="tiny muted">{names[resultLoop]} P</span><strong>{candidate?.p??"—"}</strong></div>
@@ -131,6 +115,24 @@ export default function ParameterTuning(){
       </div>
       <div className="pi-auto-message" role="status" aria-live="polite">{message||"整定完成后自动应用较优参数；P、I 与 PID 与限幅页输入值一致。"}</div>
     </Card>
+    </div>
+    <div className="pi-ident-response-row">
+      <Card title="辨识响应" right={<Badge>{capture?.state===3?'停止现场 · ':''}{points.length} / {capture?.count??0} 组</Badge>}>
+        <div className="pi-auto-message" role="status" aria-live="polite">{message||'自动整定包含多轮候选比较与重复验证，每轮结果会保留。'}</div>
+        {running&&view.progress&&<div className="tiny muted">{view.progress.phase==='downloading'?`读取采样 ${view.progress.received} / ${view.progress.capture.count} 组` : view.progress.phase==='capturing'?`采集中 · ${view.progress.capture.sampleHz.toFixed(2)} Hz`:'本轮已完成'}{capture&&view.progress.phase!=='complete'?'；下方保留上一轮完整波形':''}</div>}
+        {points.length&&capture?<IdentificationWaveform capture={capture}/>:<div className="pi-auto-wave"><div className="pi-auto-empty"><Icon.Gauge width={32} height={32}/><span>完成采集后显示实际响应</span><span className="tiny muted">可选择时间窗口并移动查看原始波形</span></div></div>}
+        <div className="row-wrap tiny"><span style={{color:"var(--warn)"}}>-- PRBS参考</span><span style={{color:"var(--accent)"}}>— 实际反馈</span><span className="muted">{names[selected]}</span></div>
+        {capture?.appliedAmplitude!==undefined&&<div className="tiny muted">本轮实际激励：{amplitudeText(capture.loop,capture.appliedAmplitude)} · TMC {capture.loop===0?'Id':'Iq'}上限：{amplitudeText(1,capture.loop===0?capture.currentLimits&32767:capture.currentLimits>>>16&32767)}{capture.state===3?' · 中止数据仅用于排障，不能作为完整辨识结果':''}</div>}
+        {capture?.diagnostic&&<div className="tiny muted">{diagnosticText(capture)}</div>}
+        <KV rows={[["电流 / 速度 / 位置环执行频率",capture?`${capture.pwmHz} / ${capture.velocityHz} / ${(capture.velocityHz/(((capture.pidConfig>>>16)&127)+1)).toFixed(0)} Hz`:"—"],["参考/反馈相干度",response?`${(response.coherence*100).toFixed(1)}%`:"—"],["实测闭环 -3dB 带宽",response?.bandwidthHz?`${response.bandwidthHz.toFixed(1)} Hz`:"尚未可靠测出"],["UART新增事件",capture?`0x${capture.events.toString(16).toUpperCase()}`:"—"]]}/>
+        <div className="tiny muted">执行频率表示控制器多久运算一次；闭环带宽表示能跟踪多快的变化，两者不是同一个数值。2431 的 R/L 可作校核，不能用相间参数直接代替 d/q 模型。</div>
+      </Card>
+    </div>
+    {history.length>0&&<Card title="已完成轮次" right={<Badge>{history.length} 轮 · 点击查看波形</Badge>}>
+      <div style={{maxHeight:260,overflow:'auto'}}><table className="table" style={{width:'100%',textAlign:'left'}}><thead><tr><th>环 / 轮次</th><th>P / I</th><th>评分（低为优）</th><th title="反馈绝对峰值 ÷ PRBS参考幅值，无单位">响应峰值 / 激励幅值</th><th>波形</th></tr></thead><tbody>{history.map(({trial:t,round},i)=><tr key={i}><td>{names[t.capture.loop]} / {round}</td><td>{t.p} / {t.i}</td><td>{t.score.toFixed(4)}</td><td>{t.peak.toFixed(2)}</td><td><Button disabled={busy} onClick={()=>{setCapture(t.capture);}}>查看</Button></td></tr>)}</tbody></table></div>
+      <div className="tiny muted">每轮候选写入TMC后采集，评分不达标仍保留数据。历史波形不代表当前硬件参数，试用时会核对实际PI。</div>
+    </Card>}
+
     <Card title="位置直通末段优化" right={<Badge>低 / 中 / 高速对照</Badge>}>
       <div className="stack">
         <div className="tiny muted">在40% → 60% → 50%行程往复，比较低、中、高速的超调与回拉，在本批最佳组合上继续优化速度环与位置环P/I。结果仅试用，不保存W25。</div>
