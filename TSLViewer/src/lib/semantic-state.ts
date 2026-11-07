@@ -30,6 +30,7 @@ export interface SemanticReply {
   encoder?: number[] | null;
   rtmi?: number[] | null;
   identification?: number[] | null;
+  telemetry?: { sampled_at_ms: number; bus_voltage_mv?: number | null; id_raw?: number | null; target_logical_position?: string | null; protection_state?: number | null } | null;
 }
 export interface SemanticView {
   motor: number; bootId: string; receivedAt: number; taskId?: number;
@@ -46,6 +47,12 @@ export async function readEncoderSnapshot(motor: number): Promise<SemanticReply>
   if (reply.request_id !== request_id || reply.protocol_version !== 2 || reply.operation !== 1 || reply.result || reply.replayed)
     throw new Error(`编码器回读未确认：${reply.result_name}`);
   return reply;
+}
+async function readTelemetry(motor: number, id: number): Promise<SemanticReply> {
+  return invokeCommand<SemanticReply>("motor_semantic", { motor, request: {
+    request_id: id, boot_id: "0", session_id: 0, task_id: 0,
+    command: { kind: "telemetry_state" },
+  } });
 }
 async function read(motor: number, id: number): Promise<SemanticReply> {
   const request = async (kind: string) => invokeCommand<SemanticReply>("motor_semantic", { motor, request: {
@@ -97,7 +104,28 @@ export class SemanticStateSource {
       if (d.boot_id !== m.boot_id) this.current = this.empty(motor);
       if (!d.device || !m.motor || d.boot_id !== m.boot_id || d.session_id !== m.session_id)
         throw new Error("主控启动或会话已变化，等待重新读取");
-      this.current = { motor, taskId:m.task_id, bootId: m.boot_id, receivedAt: this.clock(), device: d.device, state: m.motor, error: "" };
+      // Optional v2 read-only telemetry page; older firmware safely returns unsupported.
+      // Never publish it if boot/session/sample identity changed between queries.
+      let state = m.motor;
+      if (this.reader === read && this.sequence < 0xffffffff) {
+        try {
+          const id = ++this.sequence;
+          const x = await readTelemetry(motor, id);
+          if (epoch !== this.epoch) return this.current;
+          if (x.result === 0 && x.protocol_version === 2 && x.operation === 1 &&
+              x.request_id === id && !x.replayed && x.boot_id === m.boot_id &&
+              x.session_id === m.session_id && x.telemetry &&
+              x.telemetry.sampled_at_ms === m.motor.sampled_at_ms) {
+            state = { ...m.motor,
+              bus_voltage_mv: x.telemetry.bus_voltage_mv ?? null,
+              id_raw: x.telemetry.id_raw ?? null,
+              target_logical_position: x.telemetry.target_logical_position ?? null,
+              protection_state: x.telemetry.protection_state ?? null,
+            };
+          }
+        } catch { /* Optional page unavailable: basic state remains usable. */ }
+      }
+      this.current = { motor, taskId:m.task_id, bootId: m.boot_id, receivedAt: this.clock(), device: d.device, state, error: "" };
     } catch (error) {
       if (epoch === this.epoch) this.current = { ...this.current, error: String(error) };
     } finally { this.inFlight = false; }
