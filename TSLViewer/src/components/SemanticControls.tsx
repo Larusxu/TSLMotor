@@ -189,8 +189,8 @@ export function SemanticControls({ children }: { children: ReactNode }) {
             onChange={e => changeSlider(Number(e.target.value))} />
           <Field label="目标"><NumField label="目标百分比" value={percent}
             onChange={v => {
-              // Editing a target does not issue motion until explicit 前往,
-              // except when real-time send has been enabled intentionally.
+              // Numeric edits only update the draft. Motion is sent by 前往;
+              // live send remains specific to the slider / hold-to-jog path.
               if (!Number.isFinite(v)) return;
               setTarget(v);
             }} unit="%" min={0} max={100} step={.1} clampOnCommit={false}
