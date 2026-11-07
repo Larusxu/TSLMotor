@@ -12,10 +12,10 @@ import { Button, Card, Field, SelectField, Badge, Icon, Stat } from "../componen
 function LiveStats() {
   const app = useApp();
   const s = app.connected && app.semantic.motor === app.motor && semanticFresh(app.semantic) ? app.semantic.state : null;
-  const speed = app.scope.latest.get(0), liveTorque = app.scope.latest.get(2);
+  const speed = s && app.streaming ? app.scope.latest.get(0) : null, liveTorque = s && app.streaming ? app.scope.latest.get(2) : null;
   const rpm = speed ?? (s?.feedback_fresh ? -s.velocity_raw / app.cal.countsPerRpm : null);
   const iq = liveTorque ?? (s?.feedback_fresh ? s.iq_raw * app.cal.maPerCount : null);
-  const temp = s?.temperature_raw;
+  const temp = s?.feedback_fresh ? s.temperature_raw : null;
   return <div className="grid cols-3">
     <Stat label="实际转速" value={rpm == null ? "—" : fmt(rpm, 0)} unit="RPM"
       delta={app.streaming ? "RTMI" : "主控反馈"} />
@@ -41,7 +41,30 @@ export default function SemanticHoming() {
       setNote("主控已接收找零任务；以状态卡与双端有效标志判断结果");
     } catch (e) { setNote(String(e)); app.toast("error",`M${app.motor} 找零启动失败：${String(e)}`); } finally { setBusy(false); }
   };
-  return <div className="grid" style={{ gap: 14 }}><SemanticStatus /><LiveStats /><SemanticControls>
+  const ready = !!s?.config_verified && !!s?.align_valid && !!s?.limits_valid;
+  const markers = [
+    ["驱动", s ? (["禁能", "初始化", "使能", "故障"][s.drive] ?? "未知") : "未确认", s?.drive === 2],
+    ["运动授权", s ? (s.permit ? "已授权" : "未授权") : "未确认", !!s?.permit],
+    ["电角度", s ? (s.align_valid ? "已对齐" : "未对齐") : "未确认", !!s?.align_valid],
+    ["配置", s ? (s.config_verified ? "已校验" : "未校验") : "未确认", !!s?.config_verified],
+    ["行程", s ? (s.span_valid ? "有效" : "未建立") : "未确认", !!s?.span_valid],
+    ["反馈", s ? (s.feedback_fresh ? "实时" : "不可用") : "未确认", !!s?.feedback_fresh],
+  ] as const;
+  return <div className="homing-workspace">
+    <section className="homing-dashboard" aria-label="当前电机实时状态">
+      <div className="homing-dashboard-heading"><strong>M{app.motor} · 实时状态</strong>
+        <span className={s?.fault || s?.last_error ? "homing-health is-fault" : ready && s?.feedback_fresh ? "homing-health is-ready" : "homing-health"}>
+          {s?.fault || s?.last_error ? "故障 / 异常" : !s ? "数据未确认" : ready && s.feedback_fresh ? "配置就绪" : "待检查"}
+        </span>
+        <span className="tiny muted">{!app.connected ? "主控未连接" : !s ? "等待本电机最新状态" : s.motion_active ? "运动任务执行中" : "当前待命"}</span>
+      </div>
+      <div className="homing-metrics"><SemanticStatus /><LiveStats /></div>
+      <div className="homing-state-line" role="status">
+        {markers.map(([label, value, ok]) => <span key={label} className={`homing-state-tag ${ok ? "is-ok" : ""}`}><span className="homing-state-label">{label}</span><b>{value}</b></span>)}
+        <span className="homing-state-tag"><span className="homing-state-label">故障码</span><b>{s ? s.fault || s.last_error || "无" : "—"}</b></span>
+      </div>
+    </section>
+    <div className="homing-operations"><SemanticControls>
     <Card title="找零控制" right={<Badge tone={s?.motion_owner===2?"accent":"neutral"}>{s?.motion_owner===2?"正在找零":"主控执行"}</Badge>}>
       <div className="grid homing-control-grid" style={{gap:14}}>
         <div className="homing-operation compact-homing" style={{gap:12}}>
@@ -58,5 +81,5 @@ export default function SemanticHoming() {
         </div>
       </div>
     </Card>
-  </SemanticControls></div>;
+  </SemanticControls></div></div>;
 }
