@@ -1984,3 +1984,46 @@ select optgroup {
   .homing-operations .ramp-inline { grid-template-columns:minmax(0,1fr); }
   .homing-operations .ramp-inline .motor-ramp-fields { flex-wrap:wrap; }
 }
+
+
+/* Layout alignment for the semantic mainboard control page only. */
+.homing-operations .card-head { padding:10px 14px 8px; }
+.homing-operations .card-body { padding:0 14px 12px; }
+.homing-operations .card-body.stack { gap:8px; }
+.homing-operations .btn { height:35px; min-height:35px; }
+.homing-operations .input-wrap { min-height:35px; }
+.homing-operations .input-wrap input,
+.homing-operations .input-wrap select { height:33px; padding-top:7px; padding-bottom:7px; }
+.homing-motor-card .card-head.bordered { border-bottom:0; }
+.homing-motor-card .motor-config-section { border:0; padding:0; }
+.homing-motor-card .motor-config-stack { gap:8px; }
+.homing-motor-card .motor-config-row { align-items:end; }
+.homing-operations .config-apply-actions { align-items:end; }
+.homing-ramp-indicator { font-size:11px; font-weight:600; color:var(--text-4); white-space:nowrap; }
+.homing-ramp-indicator.is-on { color:var(--ok); }
+.homing-operations .ramp-inline { gap:10px; }
+.homing-operations .ramp-inline .motor-ramp-fields { gap:8px; }
+.homing-operations .ramp-inline .motor-config-row { gap:8px !important; }
+.homing-operations .arrival-feedback { gap:3px; padding:7px 9px; font-size:10.5px; }
+.homing-operations .position-work-grid .card-body { gap:8px; }
+.homing-position-target {
+  display:grid; grid-template-columns:minmax(80px,1fr) minmax(110px,170px) auto;
+  gap:10px; align-items:end; min-width:0;
+}
+.homing-position-target input[type="range"] { width:100%; min-width:0; align-self:center; }
+.homing-position-target .field { gap:3px; }
+.homing-position-target > .btn { align-self:end; }
+.homing-position-foot {
+  display:flex; flex-wrap:wrap; gap:4px 14px;
+  justify-content:space-between; align-items:center;
+}
+.homing-position-foot .tiny { line-height:1.4; }
+@media(max-width:1000px) {
+  .homing-operations .motor-config-row { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .homing-operations .config-apply-actions { grid-column:1/-1; justify-content:flex-start; }
+  .homing-position-target { grid-template-columns:minmax(70px,1fr) minmax(100px,140px) auto; gap:8px; }
+}
+@media(max-width:580px) {
+  .homing-position-target { grid-template-columns:minmax(0,1fr) 90px; }
+  .homing-position-target input[type="range"] { grid-column:1/-1; }
+}
