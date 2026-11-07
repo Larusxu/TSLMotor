@@ -152,7 +152,7 @@ export function SemanticControls({ children }: { children: ReactNode }) {
 
         </section>
         <section className="motor-config-section ramp-inline" aria-label="Ramp 配置">
-          <div className="motor-config-heading">RAMP <span className={`homing-ramp-indicator ${rampOn ? "is-on" : ""}`} role="status">{rampOn ? "已开启" : "未开启"}</span></div>
+          <div className={`motor-config-heading homing-ramp-indicator ${rampOn ? "is-on" : ""}`} role="status" aria-label={`RAMP ${rampOn ? "开启" : "关闭"}`}>RAMP</div>
           <fieldset className="motor-ramp-fields" disabled={!rampOn||busy}>
             <div className="grid cols-4 motor-config-row" style={{gap:10}}>
               <Field label={cfg.mode==="velocity_ramp"?"加减速时间":"加速时间"}><NumField value={draft.ramp.acceleration_s*1000} onChange={v=>draft.setRamp(c=>({...c,acceleration_s:v/1000}))} unit="ms" min={1} max={600000} step={1}/></Field>
