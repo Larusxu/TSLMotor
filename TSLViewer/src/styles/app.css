@@ -2082,3 +2082,30 @@ select optgroup {
 @media(max-width:700px) {
   .encoder-monitor-row .encoder-process-grid { grid-template-columns:minmax(0,1fr); }
 }
+
+
+/* The card was stretching alongside Angle Feedback, but its non-flex body
+   retained content height. Stretch the entire card -> body -> grid -> steps
+   chain so the two process windows fill the available card height. */
+.encoder-monitor-row .encoder-process-card {
+  display:flex;
+  flex-direction:column;
+  flex:1 1 auto;
+  min-height:0;
+}
+.encoder-monitor-row .encoder-process-card > .card-body {
+  display:flex;
+  flex:1 1 auto;
+  flex-direction:column;
+  min-height:0;
+}
+.encoder-monitor-row .encoder-process-card .encoder-process-grid {
+  flex:1 1 auto;
+  min-height:260px;
+  grid-template-rows:minmax(0,1fr);
+}
+.encoder-monitor-row .encoder-process-column > .steps-box {
+  flex:1 1 auto;
+  height:100%!important;
+  min-height:232px;
+}
