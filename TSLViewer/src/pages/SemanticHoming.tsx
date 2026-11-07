@@ -73,8 +73,11 @@ export default function SemanticHoming() {
     ? arrivalLabels[s.arrival_phase] ?? "未确认" : "未确认";
   const id = s?.feedback_fresh && s.id_raw != null
     ? fmt(s.id_raw * app.cal.maPerCount, 1) + " mA" : "—";
-  const protection = !s ? "未确认" : s.fault ? "故障" :
-    s.protection_state != null ? (s.protection_state === 0 ? "正常" : `状态 ${s.protection_state}`) : "未确认";
+  const protectionBits = s?.protection_state;
+  const protection = !s ? "未确认" : s.fault ? "故障" : protectionBits == null ? "未确认" :
+    protectionBits === 0 ? "正常" : (protectionBits & ~0x22000000) !== 0 ?
+      `故障 0x${protectionBits.toString(16).toUpperCase()}` :
+      `预警 0x${protectionBits.toString(16).toUpperCase()}`;
   const markers = [
     { label: "驱动", value: !s ? "未确认" : (["未使能", "初始化", "已使能", "故障"][s.drive] ?? "未确认"), tone: s?.drive === 2 ? "ok" : "warn" },
     { label: "运动", value: stateText(s?.permit, "已授权", "未授权"), tone: s?.permit ? "ok" : "warn" },
@@ -82,7 +85,7 @@ export default function SemanticHoming() {
     { label: "电角度", value: stateText(s?.align_valid, "已对齐", "未对齐"), tone: s?.align_valid ? "ok" : "warn" },
     { label: "配置", value: stateText(s?.config_verified, "已校验", "未校验"), tone: s?.config_verified ? "ok" : "warn" },
     { label: "行程", value: stateText(s?.span_valid, "有效", "未建立"), tone: s?.span_valid ? "ok" : "warn" },
-    { label: "保护", value: protection, tone: s?.fault ? "warn" : protection === "正常" ? "ok" : "neutral" },
+    { label: "保护", value: protection, tone: s?.fault || protection.startsWith("故障") || protection.startsWith("预警") ? "warn" : protection === "正常" ? "ok" : "neutral" },
     { label: "Id 电流", value: id, tone: "neutral" },
     { label: "位置到位", value: arrival, tone: arrival === "已到位" ? "ok" : "neutral" },
     { label: "故障", value: !s ? "未确认" : s.fault || s.last_error ? String(s.fault || s.last_error) : "无", tone: s?.fault || s?.last_error ? "warn" : "neutral" },
