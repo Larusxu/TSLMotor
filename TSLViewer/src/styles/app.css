@@ -2006,13 +2006,28 @@ select optgroup {
 .homing-operations .ramp-inline .motor-config-row { gap:8px !important; }
 .homing-operations .arrival-feedback { gap:3px; padding:7px 9px; font-size:10.5px; }
 .homing-operations .position-work-grid .card-body { gap:8px; }
+/* Separate the small target label from the actual control baseline. */
 .homing-position-target {
-  display:grid; grid-template-columns:minmax(80px,1fr) minmax(110px,170px) auto;
-  gap:10px; align-items:end; min-width:0;
+  display:grid;
+  grid-template-columns:minmax(80px,1fr) minmax(110px,170px) auto;
+  grid-template-rows:auto 35px;
+  column-gap:10px; row-gap:3px; align-items:center; min-width:0;
 }
-.homing-position-target input[type="range"] { width:100%; min-width:0; align-self:center; }
-.homing-position-target .field { gap:3px; }
-.homing-position-target > .btn { align-self:end; }
+.homing-position-target input[type="range"] {
+  grid-column:1; grid-row:2;
+  width:100%; min-width:0; align-self:center;
+}
+.homing-position-target .field {
+  grid-column:2; grid-row:1 / 3;
+  align-self:stretch; gap:3px;
+  grid-template-rows:auto 35px;
+}
+.homing-position-target .field > .input-wrap { align-self:stretch; }
+.homing-position-target > .btn { grid-column:3; grid-row:2; align-self:stretch; }
+/* Ramp is an indicator only; its baseline follows the control boxes, not captions. */
+.homing-motor-card .ramp-inline .motor-config-heading {
+  align-self:end; height:35px; min-height:35px; align-items:center;
+}
 .homing-position-foot {
   display:flex; flex-wrap:wrap; gap:4px 14px;
   justify-content:space-between; align-items:center;
@@ -2024,6 +2039,11 @@ select optgroup {
   .homing-position-target { grid-template-columns:minmax(70px,1fr) minmax(100px,140px) auto; gap:8px; }
 }
 @media(max-width:580px) {
-  .homing-position-target { grid-template-columns:minmax(0,1fr) 90px; }
-  .homing-position-target input[type="range"] { grid-column:1/-1; }
+  .homing-position-target {
+    grid-template-columns:minmax(0,1fr) 90px;
+    grid-template-rows:20px 35px 35px;
+  }
+  .homing-position-target input[type="range"] { grid-column:1/-1; grid-row:1; }
+  .homing-position-target .field { grid-column:1; grid-row:2 / 4; }
+  .homing-position-target > .btn { grid-column:2; grid-row:3; }
 }
