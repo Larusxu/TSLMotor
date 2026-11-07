@@ -1967,7 +1967,7 @@ select optgroup {
 .homing-operations .compact-homing { gap:8px; }
 .homing-operations .homing-message-slot { min-height:0; gap:4px; }
 .homing-operations .position-work-grid { align-items:start; gap:10px; }
-@media(max-width:1400px) { .homing-metrics { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media(max-width:1050px) { .homing-metrics { grid-template-columns:repeat(3,minmax(0,1fr)); } }
 @media(max-width:900px) {
   .homing-dashboard { position:relative; top:auto; }
   .homing-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
