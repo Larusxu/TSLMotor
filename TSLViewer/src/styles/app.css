@@ -1982,7 +1982,7 @@ select optgroup {
   .homing-dashboard { position:relative; top:auto; }
   .homing-telemetry-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .homing-operations .ramp-inline { grid-template-columns:minmax(0,1fr); }
-  .homing-operations .ramp-inline .motor-ramp-fields { flex-wrap:wrap; }
+  .homing-operations .ramp-inline .motor-ramp-fields { grid-template-columns:minmax(0,1fr); }
 }
 
 
@@ -2002,8 +2002,23 @@ select optgroup {
 .homing-ramp-indicator { font-size:11px; font-weight:600; color:var(--text-4); white-space:nowrap; }
 .homing-ramp-indicator.is-on { color:var(--ok); }
 .homing-operations .ramp-inline { gap:10px; }
-.homing-operations .ramp-inline .motor-ramp-fields { gap:8px; }
-.homing-operations .ramp-inline .motor-config-row { gap:8px !important; }
+.homing-operations .ramp-inline .motor-ramp-fields {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:end;
+  gap:8px;
+  min-width:0;
+}
+.homing-operations .ramp-inline .motor-ramp-fields > .motor-config-row { gap:8px !important; min-width:0; }
+.homing-operations .ramp-inline .motor-ramp-fields > label.row {
+  display:flex;
+  height:35px;
+  min-height:35px;
+  align-items:center;
+  align-self:end;
+  margin:0;
+  white-space:nowrap;
+}
 .homing-operations .arrival-feedback { gap:3px; padding:7px 9px; font-size:10.5px; }
 .homing-operations .position-work-grid .card-body { gap:8px; }
 /* Separate the small target label from the actual control baseline. */
@@ -2027,7 +2042,9 @@ select optgroup {
 /* Ramp is an indicator only; its baseline follows the control boxes, not captions. */
 .homing-motor-card .ramp-inline .motor-config-heading {
   align-self:end; height:35px; min-height:35px; align-items:center;
+  color:var(--text-4);
 }
+.homing-motor-card .ramp-inline .motor-config-heading.is-on { color:var(--ok); }
 .homing-position-foot {
   display:flex; flex-wrap:wrap; gap:4px 14px;
   justify-content:space-between; align-items:center;
