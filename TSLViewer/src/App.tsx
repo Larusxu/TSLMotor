@@ -16,6 +16,8 @@ import Homing from "./pages/Homing";
 import Tuning from "./pages/Tuning";
 import RegistersConfig from "./pages/RegistersConfig";
 import ParameterTuning from "./pages/ParameterTuning";
+import MainboardPid from "./pages/MainboardPid";
+import TelemetryPanels from "./components/TelemetryPanels";
 import LoopTest from "./pages/LoopTest";
 import Sequence from "./pages/Sequence";
 import Logs from "./pages/Logs";
@@ -27,7 +29,6 @@ type Page =
   | "encoder"
   | "homing"
   | "registers"
-  | "autotuning"
   | "tuning"
   | "looptest"
   | "storage"
@@ -35,7 +36,7 @@ type Page =
   | "logs";
 
 /** Pages that only matter while commissioning; hidden in production mode. */
-const OP_ONLY = new Set<Page>(["encoder", "homing", "tuning", "autotuning", "registers", "looptest", "storage"]);
+const OP_ONLY = new Set<Page>(["encoder", "homing", "tuning", "registers", "looptest", "storage"]);
 
 const NAV: {
   group: string;
@@ -53,8 +54,7 @@ const NAV: {
   {
     group: "调校",
     items: [
-      { id: "tuning", label: "PID 与限幅", hint: "TUNE", icon: <Icon.Tuning /> },
-      { id: "autotuning", label: "参数整定", hint: "IDENT", icon: <Icon.Tuning /> },
+      { id: "tuning", label: "PI整定", hint: "TUNE", icon: <Icon.Tuning /> },
       { id: "registers", label: "寄存器与配置", hint: "CONFIG", icon: <Icon.Registers /> },
       { id: "looptest", label: "环路测试", hint: "LOOP", icon: <Icon.Gauge /> },
       { id: "storage", label: "板载存储", hint: "W25 / M24", icon: <Icon.Save /> },
@@ -87,12 +87,11 @@ const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
     crumb: "HOMING",
   },
   tuning: {
-    title: "PID 与限幅",
-    desc: "三级级联参数、单位换算与阶跃响应实测。电流归一化选错会让增益差 256 倍。",
-    crumb: "TUNING",
+    title: "PI整定",
+    desc: "PI 参数、PRBS 系统辨识、整定结果及实时曲线与通道配置。",
+    crumb: "PI TUNING",
   },
   registers: {title:"寄存器与配置",desc:"主控控制状态、公共配置及空白电机初始化参数。",crumb:"REGISTERS · CONFIGURATION"},
-  autotuning: { title: "参数整定", desc: "TMC PRBS 系统辨识、PI计算与实机参数试用。", crumb: "PARAMETER IDENTIFICATION" },
   looptest: {
     title: "环路测试",
     desc: "在受保护的行程内做恒 Iq / 恒速度探测、速度 PI 自动辨识与位置环跟随测试，并看波形。",
@@ -118,7 +117,7 @@ const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
 function Shell() {
   const [page, setPage] = useState<Page>("overview");
   const [tuningVisited, setTuningVisited] = useState(false);
-  useEffect(() => { if (page === "autotuning") setTuningVisited(true); }, [page]);
+  useEffect(() => { if (page === "tuning") setTuningVisited(true); }, [page]);
   const app = useApp();
   const cylinders = useCylinders(app.connected, page === "cylinders" || page === "overview" || page === "registers", app.acquiring || app.streaming, app.toast);
   const [fps, setFps] = useState(0);
@@ -280,7 +279,6 @@ function Shell() {
             {page === "cylinders" && <Cylinders model={cylinders}/>}
             {page === "encoder" && <Encoder />}
             {page === "homing" && <Homing />}
-            {page === "tuning" && <Tuning key={app.motor} />}
             {page === "registers" && <RegistersConfig cylinders={cylinders} />}
             {page === "looptest" && <LoopTest />}
             {page === "storage" && <Storage />}
@@ -288,7 +286,15 @@ function Shell() {
             {page === "logs" && <Logs />}
           </div>
           {/* Keep the tuning session outside the keyed route: navigation must not dispose its results or running job. */}
-          {(tuningVisited || page === "autotuning") && <div key="persistent-tuning" hidden={page !== "autotuning"}><ParameterTuning key={app.motor} /></div>}
+          {(tuningVisited || page === "tuning") && <div key="persistent-tuning" hidden={page !== "tuning"}>
+            {app.mode === "direct"
+              ? <Tuning key={app.motor} />
+              : <div className="pi-merged-workspace">
+                  <MainboardPid key={app.motor}/>
+                  <ParameterTuning key={app.motor}/>
+                  <TelemetryPanels/>
+                </div>}
+          </div>}
         </main>
       </div>
 
