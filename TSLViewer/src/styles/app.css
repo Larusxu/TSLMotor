@@ -2147,3 +2147,96 @@ select optgroup {
 @media(max-width:720px) {
   .pi-ident-status { grid-template-columns:minmax(0,1fr); }
 }
+
+
+/* Unified PI tuning second pass: paired, equal-height commissioning cards. */
+.pi-merged-workspace .pi-ident-result-row {
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  align-items:stretch;
+  gap:12px;
+}
+.pi-merged-workspace .pi-ident-result-row > .card {
+  display:flex;
+  flex-direction:column;
+  height:100%;
+  min-width:0;
+}
+.pi-merged-workspace .pi-ident-result-row > .card > .card-body {
+  display:flex;
+  flex:1 1 auto;
+  flex-direction:column;
+  min-height:0;
+}
+.pi-merged-workspace .pi-ident-card > .card-body > .stack {
+  display:flex;
+  flex:1 1 auto;
+  flex-direction:column;
+  min-height:0;
+  gap:10px;
+}
+.pi-merged-workspace .pi-ident-status {
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  background:transparent;
+  padding:0;
+  border:0;
+  gap:8px;
+}
+.pi-merged-workspace .pi-ident-status > div {
+  background:var(--inset);
+  border:1px solid var(--line-soft);
+  border-radius:var(--r-sm);
+  padding:9px 11px;
+  gap:4px;
+}
+.pi-merged-workspace .pi-ident-actions {
+  margin-top:auto;
+  justify-content:flex-end;
+  align-items:center;
+  padding-top:8px;
+}
+.pi-merged-workspace .pi-ident-actions .btn {
+  min-height:32px; height:32px; padding:0 12px;
+  display:inline-flex; align-items:center;
+}
+.pi-merged-workspace .pi-result-card .pi-auto-result {
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+}
+.pi-merged-workspace .pi-result-table-wrap {
+  flex:1 1 auto;
+  min-height:170px;
+  overflow:auto;
+  margin-top:14px;
+}
+.pi-merged-workspace .pi-result-table { width:100%; }
+.pi-merged-workspace .pi-result-card .row-wrap { margin-top:auto !important; padding-top:12px; }
+.pi-merged-workspace .pi-endpoint-slot { min-width:0; }
+.pi-merged-workspace .pi-endpoint-slot > .card { width:100%; }
+.pi-merged-workspace .pi-response-empty-chart { overflow:hidden; }
+.pi-merged-workspace .pi-response-empty-chart svg { display:block; width:100%; height:auto; }
+.pi-merged-workspace .pi-response-stats {
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:10px;
+  padding:8px 0;
+}
+.pi-merged-workspace .pi-response-stats > div {
+  display:flex; flex-direction:column; gap:5px;
+  min-width:0;
+}
+.pi-merged-workspace .pi-response-stats span {
+  color:var(--text-3); font-size:10px; white-space:nowrap;
+}
+.pi-merged-workspace .pi-response-stats b {
+  font-weight:600; color:var(--text-2);
+  font-size:11px; overflow-wrap:anywhere;
+}
+@media(max-width:1150px) {
+  .pi-merged-workspace .pi-ident-result-row { grid-template-columns:minmax(0,1fr); }
+  .pi-merged-workspace .pi-response-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:650px) {
+  .pi-merged-workspace .pi-ident-status { grid-template-columns:minmax(0,1fr); }
+  .pi-merged-workspace .pi-response-stats { grid-template-columns:minmax(0,1fr); }
+}
