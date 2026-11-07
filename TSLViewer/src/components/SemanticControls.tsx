@@ -166,7 +166,7 @@ export function SemanticControls({ children }: { children: ReactNode }) {
 
         </section>
       </div>
-      <div className="motion-message-slot" role="status">{error && <Notice tone="warn">{error}。先读取状态或停止运行，再应用并回读配置；不会自动重发运动。</Notice>}</div>
+      {error && <div className="motion-message-slot" role="status"><Notice tone="warn">{error}。先读取状态或停止运行，再应用并回读配置；不会自动重发运动。</Notice></div>}
     </Card>
     {children}
     <div className="grid cols-2 position-work-grid">
