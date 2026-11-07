@@ -107,15 +107,15 @@ export default function ParameterTuning(){
       </div>
       <div className="pi-result-table-wrap"><table className="table pi-result-table">
         <thead><tr><th>控制环</th><th>P</th><th>I</th><th>结果</th></tr></thead>
-        <tbody>{([0,1,2,3] as Loop[]).map(k=>{
-          const v=results.find(item=>item.loop===k);
-          const current=k===resultLoop?candidate:null;
-          return <tr key={k}><td>{names[k]}</td>
-            <td className="mono">{v?.p??current?.p??"—"}</td>
-            <td className="mono">{v?.i??current?.i??"—"}</td>
-            <td>{v?(v.improved?"已改善并应用":"保留起始参数"):current?"候选参数":"—"}</td>
-          </tr>;
-        })}</tbody>
+        <tbody>
+          {results.map(v=><tr key={v.loop}><td>{names[v.loop]}</td>
+            <td className="mono">{v.p}</td><td className="mono">{v.i}</td>
+            <td>{v.improved?"已改善并应用":"保留起始参数"}</td>
+          </tr>)}
+          {Array.from({length:Math.max(0,4-results.length)},(_,i)=><tr key={`blank-${i}`} aria-hidden="true" className="pi-result-empty-row">
+            <td>&nbsp;</td><td/><td/><td/>
+          </tr>)}
+        </tbody>
       </table></div>
       <div className="row-wrap" style={{marginTop:16}}>
         <Button variant="primary" disabled={busy||!candidate||!app.connected} onClick={()=>void run(async()=>{
@@ -132,20 +132,7 @@ export default function ParameterTuning(){
       <Card title="辨识响应" right={<Badge>{capture?.state===3?'停止现场 · ':''}{points.length} / {capture?.count??0} 组</Badge>}>
         <div className="pi-auto-message" role="status" aria-live="polite">{message||'自动整定包含多轮候选比较与重复验证，每轮结果会保留。'}</div>
         {running&&view.progress&&<div className="tiny muted">{view.progress.phase==='downloading'?`读取采样 ${view.progress.received} / ${view.progress.capture.count} 组` : view.progress.phase==='capturing'?`采集中 · ${view.progress.capture.sampleHz.toFixed(2)} Hz`:'本轮已完成'}{capture&&view.progress.phase!=='complete'?'；下方保留上一轮完整波形':''}</div>}
-        {points.length&&capture?<IdentificationWaveform capture={capture}/>:<div className="pi-auto-wave pi-response-empty-chart" role="img" aria-label="尚未采样的辨识响应空坐标系">
-          <svg viewBox="0 0 800 210" preserveAspectRatio="xMidYMid meet">
-            {[0,.25,.5,.75,1].map(v=><g key={v}>
-              <line x1="65" y1={175-v*145} x2="770" y2={175-v*145} stroke="var(--line)" />
-              <text x="54" y={179-v*145} textAnchor="end" fontSize="11" fill="var(--text-4)">{v.toFixed(2)}</text>
-            </g>)}
-            {[0,.25,.5,.75,1].map(v=><g key={v}>
-              <line x1={65+705*v} y1="30" x2={65+705*v} y2="175" stroke="var(--line)" strokeDasharray="3 5" />
-              <text x={65+705*v} y="197" textAnchor="middle" fontSize="11" fill="var(--text-4)">{v.toFixed(2)}</text>
-            </g>)}
-            <text x="415" y="117" fontSize="13" textAnchor="middle" fill="var(--text-4)">等待采样</text>
-            <text x="770" y="208" fontSize="10" textAnchor="end" fill="var(--text-4)">时间 (s) · 示意坐标</text>
-          </svg>
-        </div>}
+        <IdentificationWaveform capture={points.length ? capture : null}/>
         <div className="row-wrap tiny"><span style={{color:"var(--warn)"}}>-- PRBS参考</span><span style={{color:"var(--accent)"}}>— 实际反馈</span><span className="muted">{names[selected]}</span></div>
         {capture?.appliedAmplitude!==undefined&&<div className="tiny muted">本轮实际激励：{amplitudeText(capture.loop,capture.appliedAmplitude)} · TMC {capture.loop===0?'Id':'Iq'}上限：{amplitudeText(1,capture.loop===0?capture.currentLimits&32767:capture.currentLimits>>>16&32767)}{capture.state===3?' · 中止数据仅用于排障，不能作为完整辨识结果':''}</div>}
         {capture?.diagnostic&&<div className="tiny muted">{diagnosticText(capture)}</div>}
