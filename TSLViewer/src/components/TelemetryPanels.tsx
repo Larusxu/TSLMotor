@@ -11,7 +11,9 @@ export default function TelemetryPanels(){
  const app=useApp();const [paused,setPaused]=useState(false);const [picker,setPicker]=useState(0);
  const task=useMotorConfiguration(app.motor).task;
  const state=app.connected&&app.semantic.motor===app.motor&&semanticFresh(app.semantic)?app.semantic.state:null;
- const range=state?.coordinate_valid&&state.logical_span&&state.margin_counts!=null
+ const spanValid=!!state?.coordinate_valid&&!!state.span_valid&&state.margin_counts!=null&&
+   state.logical_span!=null&&BigInt(state.logical_span)>2n*BigInt(state.margin_counts);
+ const range=spanValid&&state?.logical_span!=null&&state.margin_counts!=null
    ?[BigInt(state.margin_counts),BigInt(state.logical_span)-BigInt(state.margin_counts)] as const:null;
  const enabled=app.mode!=="direct"&&app.connected&&!!range&&!!state?.permit&&
    (state.drive===0||state.drive===2)&&state.config_verified&&state.feedback_fresh&&!state.fault;
