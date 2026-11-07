@@ -128,7 +128,7 @@ export default function MainboardEncoder(){
    <AlignmentPanels onCompleted={()=>read()} onProgress={onAlignmentProgress}/>
    <div className="grid flow-2-1 encoder-monitor-row">
      <div className="col-stack">
-     <Card title="配置流程" sub="WRITE · ALIGN" right={<Badge>{busy||s?.drive===1?"执行中":"空闲"}</Badge>}>
+     <Card title="配置流程" className="encoder-process-card" sub="WRITE · ALIGN" right={<Badge>{busy||s?.drive===1?"执行中":"空闲"}</Badge>}>
        <div className="grid cols-2 encoder-process-grid" style={{gap:12}}><div className="encoder-process-column"><div className="stat-label">编码器写入</div><Steps steps={app.stepsByKind.encoder??[]} height={232}/></div>
        <div className="encoder-process-column"><div className="stat-label">电角度对齐</div><Steps steps={alignmentSteps.length ? alignmentSteps : app.stepsByKind.calibrate??[]} height={232}/></div></div>
      </Card>
