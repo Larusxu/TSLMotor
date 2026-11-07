@@ -30,7 +30,8 @@ const PLACEHOLDER_GROUPS: CalibResult["groups"] = [0, 90, 180, 270].map((deg) =>
 }));
 
 /** 电角度对齐 + 结果 + 速度闭环。作为「编码器与对齐」页的第二节复用。 */
-export function AlignmentPanels({ onCompleted }: { onCompleted?: () => Promise<void> } = {}) {
+export type AlignmentProgress = { stage: "start" | "accepted" | "scanning" | "verifying" | "completed" | "failed" | "cancelled"; detail?: string };
+export function AlignmentPanels({ onCompleted, onProgress }: { onCompleted?: () => Promise<void>; onProgress?: (progress: AlignmentProgress) => void } = {}) {
   const app = useApp();
   const [fluxMa, setFluxMa] = useState(300);
   const [poles, setPoles] = useState(app.cal.poles);
@@ -63,19 +64,36 @@ export function AlignmentPanels({ onCompleted }: { onCompleted?: () => Promise<v
     if (dryRun || !writeBack) throw new Error("主控标定会验证并保存 W25 档案；请关闭干跑并勾选自动写回");
     if (poles !== app.cal.poles) throw new Error("极对数须先保存并由主控读回验证");
     setCommissionBusy(true); setCommissionNote("主控已接管：执行标定扫描");
+    onProgress?.({stage:"start",detail:"准备主控标定命令"});
     try {
       await app.stopStream();
+      let accepted = false;
       await semanticCommission.align(app.motor, { scanDegrees: endDeg, stepDegrees: stepDeg,
         settleMs: settle, currentMa: fluxMa }, r => {
-          if (r.motor) setCommissionNote(r.motor.drive === 1 ? "主控执行中：扫描 / 读回" : "主控正在确认标定结果");
+          if (!accepted) { accepted = true; onProgress?.({stage:"accepted",detail:"主控已应答对齐指令"}); }
+          if (r.motor) {
+            if (r.motor.drive === 1) {
+              setCommissionNote("主控执行中：扫描 / 读回");
+              onProgress?.({stage:"scanning",detail:"主控正在执行扫描（阶段状态）"});
+            } else {
+              setCommissionNote("主控正在确认标定结果");
+              onProgress?.({stage:"verifying",detail:"等待主控标定验证"});
+            }
+          }
         });
+      onProgress?.({stage:"verifying",detail:"校验偏移与写回结果"});
       await semanticMotion.permit(app.motor,false);
       const readback = await semanticMotion.command(app.motor,{kind:"encoder_state"});
       const value = readback.encoder?.[1] ? readback.encoder[4] : null;
       setVerifiedOffset(value == null ? null : value & 0xffff);
       await onCompleted?.();
       setCommissionNote(`主控标定及 W25 / M24 保存比对已确认，实际偏移=${value == null ? "读回暂不可用" : value & 0xffff}；机械双端零点需重新建立`);
-    } catch (e) { setCommissionNote(String(e)); app.toast("error", String(e)); }
+      onProgress?.({stage:"completed",detail:value == null ? "主控标定完成，偏移尚未回读" : `偏移 ${value & 0xffff} 已回读`});
+    } catch (e) {
+      const message = String(e);
+      onProgress?.({stage:message.includes("取消") ? "cancelled" : "failed",detail:message});
+      setCommissionNote(message); app.toast("error", message);
+    }
     finally { setCommissionBusy(false); }
   };
 
@@ -136,7 +154,7 @@ export function AlignmentPanels({ onCompleted }: { onCompleted?: () => Promise<v
                 variant="ghost"
                 icon={<Icon.Stop width={13} height={13} />}
                 disabled={!app.jobRunning && !commissionBusy}
-                onClick={() => { if (commissionBusy) void semanticCommission.cancel(); else app.cancel(); }}
+                onClick={() => { if (commissionBusy) { onProgress?.({stage:"cancelled",detail:"已请求取消，等待任务退出"}); void semanticCommission.cancel(); } else app.cancel(); }}
               >
                 取消
               </Button>
