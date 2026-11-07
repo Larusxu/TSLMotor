@@ -118,6 +118,8 @@ interface AppCtx {
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
 
+  positionTargetPercent: number;
+  setPositionTargetPercent: (value: number) => void;
   cal: Cal;
   setCal: (patch: Partial<Cal>) => void;
 
@@ -211,6 +213,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [stats, setStats] = useState<LinkStats | null>(null);
   const [cal, setCalState] = useState<Cal>(DEFAULT_CAL);
+  const [positionTargetPercent, setPositionTargetPercent] = useState(50);
   const [channels, setChannels] = useState<(string | null)[]>([
     "vel_act",
     mode === "direct" ? "vel_tgt" : "torque",
@@ -882,6 +885,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshPorts,
     connect,
     disconnect,
+    positionTargetPercent, setPositionTargetPercent,
     cal,
     setCal,
     scope,
