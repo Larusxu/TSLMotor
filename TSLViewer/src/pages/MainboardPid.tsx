@@ -50,7 +50,7 @@ export default function MainboardPid() {
       <div className="tiny muted" role="status" aria-live="polite">{note}</div></div>
     </Card>
     <div className="col-stack"><Card title="单位换算"><KV rows={[["PWM 频率","25.00 kHz"],["电流分辨率","0.20131 mA/LSB"],["4× 满量程","8192 LSB = 1.65 A"],["速度换算","305.4 LSB/RPM"],["位置换算","65536 LSB / 圈"],["调制满幅","18900 = 100%"]]}/></Card>
-      <Card title="生产参数对照"><table className="table"><thead><tr><th>项</th><th>生产</th><th>实测</th></tr></thead><tbody><tr><td>电流 P / I</td><td className="mono">64 / 48</td><td className="mono">359 / 129</td></tr><tr><td>近似带宽</td><td>356 Hz</td><td>200 Hz</td></tr><tr><td>速度 P / I</td><td className="mono">500 / 250</td><td>—</td></tr></tbody></table><div className="tiny muted">仅供对照，不自动覆盖当前电机 W25 档案。</div></Card>
+      <div id="pi-endpoint-slot" className="pi-endpoint-slot" aria-label="位置直通末段优化"/>
     </div>
   </div>;
 }
