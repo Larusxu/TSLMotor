@@ -75,7 +75,7 @@ export default function SemanticHoming() {
     ? fmt(s.id_raw * app.cal.maPerCount, 1) + " mA" : "—";
   const protectionBits = s?.protection_state;
   const protection = !s ? "未确认" : s.fault ? "故障" : protectionBits == null ? "未确认" :
-    protectionBits === 0 ? "正常" : (protectionBits & ~0x22000000) !== 0 ?
+    protectionBits === 0 ? "正常" : (protectionBits & ~0x2A000000) !== 0 ?
       `故障 0x${protectionBits.toString(16).toUpperCase()}` :
       `预警 0x${protectionBits.toString(16).toUpperCase()}`;
   const markers = [
