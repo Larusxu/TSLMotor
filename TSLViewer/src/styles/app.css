@@ -2109,3 +2109,41 @@ select optgroup {
   height:100%!important;
   min-height:232px;
 }
+
+/* PI tuning unification: preserve original card aesthetic, compact controls. */
+.pi-merged-workspace {
+  display:grid; gap:12px; min-width:0;
+}
+.pi-merged-parameters { align-items:start; }
+.pi-merged-toolbar { align-items:center; gap:8px; }
+.pi-merged-toolbar .btn {
+  height:32px; min-height:32px; padding:0 12px;
+  display:inline-flex; align-items:center; justify-content:center;
+}
+.pi-merged-section-title {
+  font-size:13px; font-weight:650; line-height:1.5;
+  padding:2px 1px; color:var(--text);
+}
+.pi-merged-ident { gap:10px; }
+.pi-ident-result-row { align-items:start; }
+.pi-ident-result-row > .card { min-width:0; }
+.pi-ident-status {
+  display:grid; grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:8px; padding:9px 10px;
+  border:1px solid var(--line-soft);
+  border-radius:var(--r-sm); background:var(--inset);
+}
+.pi-ident-status > div { display:grid; gap:5px; min-width:0; }
+.pi-ident-status strong {
+  font-size:12px; font-weight:600; line-height:1.25;
+  overflow-wrap:anywhere;
+}
+.pi-ident-response-row { min-width:0; }
+.pi-ident-response-row > .card { min-width:0; }
+@media(max-width:1200px) {
+  .pi-merged-toolbar { flex-wrap:wrap; }
+  .pi-ident-status { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:720px) {
+  .pi-ident-status { grid-template-columns:minmax(0,1fr); }
+}
