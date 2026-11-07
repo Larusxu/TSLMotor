@@ -1932,31 +1932,36 @@ select optgroup {
 @media(max-width:700px){.register-config-layout{grid-template-columns:minmax(0,1fr);}.register-config-nav{position:static;grid-template-columns:repeat(2,minmax(0,1fr));}.register-config-actions{position:static;flex-wrap:wrap;}.config-table th:nth-child(1){width:25%;}.config-table th:nth-child(2){width:30%;}.config-table th:nth-child(3){width:12%;}}
 
 
-/* Mainboard homing: persistent, compact operator telemetry. */
+/* Homing telemetry: original visual language, no extra enclosing card. */
 .homing-workspace { display:grid; gap:10px; min-width:0; }
 .homing-dashboard {
-  position:sticky; top:-20px; z-index:12; display:grid; gap:8px; padding:10px 12px;
-  border:1px solid var(--line-strong); border-radius:12px;
-  background:var(--surface); box-shadow:0 9px 28px rgba(0,0,0,.22);
+  position:sticky; top:-20px; z-index:12;
+  display:grid; gap:8px; padding:8px 0 7px;
+  border:0; border-bottom:1px solid var(--line-soft);
+  border-radius:0; background:var(--bg); box-shadow:none;
 }
-.homing-dashboard-heading { display:flex; flex-wrap:wrap; align-items:center; gap:10px; min-height:20px; }
-.homing-dashboard-heading strong { font-size:12px; letter-spacing:.02em; }
-.homing-health { padding:3px 8px; border-radius:999px; color:var(--text-2); background:var(--fill-1); font-size:11px; }
-.homing-health.is-ready { color:var(--ok); background:rgba(42,177,128,.09); }
-.homing-health.is-fault { color:var(--danger); background:rgba(230,75,83,.1); }
-.homing-metrics { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:8px; }
-.homing-metrics > .grid { display:contents; }
-.homing-metrics > .row-wrap { grid-column:1/-1; gap:14px; font-size:10px; min-height:16px; }
-.homing-metrics .stat { padding:9px 11px; min-width:0; gap:3px; border-radius:9px; }
-.homing-metrics .stat-label { font-size:10px; letter-spacing:.02em; text-transform:none; }
-.homing-metrics .stat-value { font-size:20px; min-width:0; overflow-wrap:anywhere; }
-.homing-metrics .stat-value .unit { font-size:10px; }
-.homing-metrics .stat-delta { font-size:9px; }
-.homing-state-line { display:flex; flex-wrap:wrap; gap:6px; }
-.homing-state-tag { display:inline-flex; align-items:center; gap:5px; padding:3px 8px; background:var(--inset); border:1px solid var(--line-soft); border-radius:6px; font-size:10px; white-space:nowrap; }
+.homing-telemetry-grid {
+  display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:8px; min-width:0;
+}
+.homing-telemetry-grid .stat { padding:7px 12px; min-width:0; gap:3px; border-radius:10px; }
+.homing-telemetry-grid .stat-label { font-size:10px; letter-spacing:.02em; text-transform:none; }
+.homing-telemetry-grid .stat-value { font-size:21px; min-width:0; line-height:1.2; overflow-wrap:anywhere; }
+.homing-telemetry-grid .stat-value .unit { font-size:10px; }
+.homing-state-line {
+  display:flex; flex-wrap:wrap; align-items:center;
+  column-gap:0; row-gap:5px; font-size:11px; line-height:1.5;
+}
+.homing-state-item {
+  display:inline-flex; align-items:baseline; white-space:nowrap;
+  gap:2px; padding:0 12px; border-right:1px solid var(--line-soft);
+}
+.homing-state-item:first-child { padding-left:0; }
+.homing-state-item:last-child { border-right:0; }
 .homing-state-label { color:var(--text-3); }
-.homing-state-tag b { font-weight:600; color:var(--text-2); }
-.homing-state-tag.is-ok b { color:var(--ok); }
+.homing-state-value { font-weight:600; color:var(--text-2); }
+.homing-state-value.is-ok { color:var(--ok); }
+.homing-state-value.is-warn { color:var(--danger); }
 .homing-operations { display:grid; gap:10px; min-width:0; }
 .homing-operations .motor-config-stack { gap:10px; }
 .homing-operations .motor-config-section { gap:7px; }
@@ -1967,10 +1972,15 @@ select optgroup {
 .homing-operations .compact-homing { gap:8px; }
 .homing-operations .homing-message-slot { min-height:0; gap:4px; }
 .homing-operations .position-work-grid { align-items:start; gap:10px; }
-@media(max-width:1050px) { .homing-metrics { grid-template-columns:repeat(3,minmax(0,1fr)); } }
-@media(max-width:900px) {
+/* At wide desktop widths, all eight metrics share one row. */
+@media(min-width:1820px) {
+  .homing-telemetry-grid { grid-template-columns:repeat(8,minmax(0,1fr)); }
+  .homing-telemetry-grid .stat-value { font-size:19px; }
+  .homing-state-line { justify-content:space-between; }
+}
+@media(max-width:850px) {
   .homing-dashboard { position:relative; top:auto; }
-  .homing-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .homing-telemetry-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .homing-operations .ramp-inline { grid-template-columns:minmax(0,1fr); }
   .homing-operations .ramp-inline .motor-ramp-fields { flex-wrap:wrap; }
 }
