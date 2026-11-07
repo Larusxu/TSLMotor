@@ -17,6 +17,10 @@ export interface MotorState {
   arrival_tolerance?: number | null; arrival_dwell_ms?: number | null;
   logical_position?: string | null; logical_span?: string | null; margin_counts?: number | null; coordinate_valid?: boolean;
   temperature_raw?: number | null;
+  /** Optional mainboard telemetry fields: absent on existing firmware -> UI displays —. */
+  bus_voltage_mv?: number | null; id_raw?: number | null;
+  target_logical_position?: string | null;
+  protection_state?: number | null;
 }
 export interface SemanticReply {
   protocol_version: number; operation: number; request_id: number; boot_id: string;
