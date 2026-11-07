@@ -113,7 +113,7 @@ export default function ParameterTuning(){
         <Button disabled={busy||!trial||!app.connected} onClick={()=>void run(async()=>{const saved=piAuto.trialValues(app.motor);await piAuto.save(app.motor);if(saved)draft.setPid(old=>mergePiTuning(old,saved));setTrial(false);setMessage("TMC回读通过，已保存到本电机W25档案。");})} icon={<Icon.Save/>}>保存到电机档案</Button>
         <Button variant="ghost" disabled={busy||!trial||!app.connected} onClick={()=>void run(async()=>{await piAuto.restore(app.motor);setTrial(false);setMessage("原PI已恢复并回读，W25保持。");})}>恢复原PI</Button>
       </div>
-      <div className="pi-auto-message" role="status" aria-live="polite">{message||"整定完成后自动应用较优参数；P、I 与 PID 与限幅页输入值一致。"}</div>
+      <div className="pi-auto-message" role="status" aria-live="polite">{message||"整定完成后自动应用较优参数；P、I 与上方 PI 参数保持一致。"}</div>
     </Card>
     </div>
     <div className="pi-ident-response-row">
