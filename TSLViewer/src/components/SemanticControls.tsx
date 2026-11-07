@@ -35,7 +35,6 @@ export function SemanticControls({ children }: { children: ReactNode }) {
     return Math.floor(cfg.max_rpm * COUNTS_PER_RPM);
   };
   const motionCommand = (command: Parameters<typeof semanticMotion.taskCommand>[3]) => semanticMotion.taskCommand(app.motor, mode, taskRaw(), command);
-  const [precise, setPrecise] = useState("0");
   const [workType, setWorkType] = useState("repeat");
   const [, setApplied] = useState<typeof cfg | null>(null);
   const [applying, setApplying] = useState<"motion" | "longTerm" | null>(null);
@@ -122,7 +121,7 @@ export function SemanticControls({ children }: { children: ReactNode }) {
     setError("");percentJog.current!.start(percentRef.current,direction);
   };
   return <>
-    <Card title="电机控制" bodyClass="stack" right={<Badge tone={s?.drive === 2 ? "ok" : "neutral"}>M{app.motor} · {s ? ["驱动禁能","准备中","驱动使能","故障"][s.drive] ?? "未确认" : "未确认"}</Badge>}>
+    <Card title="电机控制" className="homing-motor-card" bodyClass="stack" right={<Badge tone={s?.drive === 2 ? "ok" : "neutral"}>M{app.motor} · {s ? ["驱动禁能","准备中","驱动使能","故障"][s.drive] ?? "未确认" : "未确认"}</Badge>}>
       <div className="motor-config-stack">
         <section className="motor-config-section" aria-label="运动与保护参数">
           <div className="grid motor-config-row" style={{gap:10}}>
@@ -153,7 +152,7 @@ export function SemanticControls({ children }: { children: ReactNode }) {
 
         </section>
         <section className="motor-config-section ramp-inline" aria-label="Ramp 配置">
-          <div className="motor-config-heading">RAMP <Toggle checked={rampOn} disabled={busy} label="开启 Ramp" onChange={v=>draft.setTask(c=>({...c,mode:v?"position_ramp":"position_direct"}))}/></div>
+          <div className="motor-config-heading">RAMP <span className={`homing-ramp-indicator ${rampOn ? "is-on" : ""}`} role="status">{rampOn ? "已开启" : "未开启"}</span></div>
           <fieldset className="motor-ramp-fields" disabled={!rampOn||busy}>
             <div className="grid cols-4 motor-config-row" style={{gap:10}}>
               <Field label={cfg.mode==="velocity_ramp"?"加减速时间":"加速时间"}><NumField value={draft.ramp.acceleration_s*1000} onChange={v=>draft.setRamp(c=>({...c,acceleration_s:v/1000}))} unit="ms" min={1} max={600000} step={1}/></Field>
@@ -184,15 +183,25 @@ export function SemanticControls({ children }: { children: ReactNode }) {
           </HoldMotionButton>)}
           <Badge>15% / s</Badge>
         </div>
-        <input aria-label="行程百分比" type="range" min={0} max={100} step={.1} value={percent} disabled={!can || !range || holding}
-          onChange={e => changeSlider(Number(e.target.value))} style={{ width: "100%" }} />
-        <div>编辑目标 {percent.toFixed(1)}% · 实际 {s?.coordinate_valid && s.feedback_fresh && s.logical_span && s.logical_position ? (Number(s.logical_position)/Number(s.logical_span)*100).toFixed(2)+"%" : "未确认"} · 归零位置 {s?.feedback_fresh && s.coordinate_valid ? s.logical_position : "未确认"} Count</div>
-
-
-        <div className="row" style={{gap:8}}><label htmlFor="precise-position">精确目标</label><input id="precise-position" className="input" style={{flex:1,minWidth:0}} aria-label="精确归零目标" value={precise} onChange={e=>setPrecise(e.target.value)}/><Button disabled={!can||!range} onClick={()=>void run(async()=>{if(!/^-?\d+$/.test(precise)||!range||BigInt(precise)<range[0]||BigInt(precise)>range[1])throw Error("目标超出可用行程");setTarget(Number(BigInt(precise)-range[0])/Number(range[1]-range[0])*100);await motionCommand({kind:"logical_move",position:precise});})}>前往</Button></div>
-        <Check disabled={holding} checked={live} onChange={setLive}>实时发送（合并为最新目标）</Check>
-        <div className="row-wrap"><Button variant="primary" icon={<Icon.Target width={14} height={14}/>} disabled={!can || !range} onClick={() => void run(() => motionCommand({ kind: "logical_move", position: count(percent) }))}>前往</Button>
-        <Button variant="ghost" onClick={() => stop()}>停止</Button></div>
+        <div className="homing-position-target">
+          <input aria-label="行程百分比" type="range" min={0} max={100} step={.1}
+            value={percent} disabled={!can || !range || holding}
+            onChange={e => changeSlider(Number(e.target.value))} />
+          <Field label="目标"><NumField label="目标百分比" value={percent}
+            onChange={v => {
+              // Editing a target does not issue motion until explicit 前往,
+              // except when real-time send has been enabled intentionally.
+              if (!Number.isFinite(v)) return;
+              setTarget(v);
+            }} unit="%" min={0} max={100} step={.1} clampOnCommit={false}
+            disabled={!can || !range || holding}/></Field>
+          <Button variant="primary" disabled={!can || !range || holding}
+            onClick={() => void run(() => motionCommand({kind:"logical_move",position:count(percent)}))}>前往</Button>
+        </div>
+        <div className="homing-position-foot">
+          <span className="tiny muted">编辑目标 {percent.toFixed(1)}% · 实际 {s?.coordinate_valid && s.feedback_fresh && s.logical_span && s.logical_position != null ? (Number(s.logical_position)/Number(s.logical_span)*100).toFixed(2)+"%" : "未确认"} · 归零位置 {s?.feedback_fresh && s.coordinate_valid ? s.logical_position : "未确认"} Count</span>
+          <Check disabled={holding} checked={live} onChange={setLive}>实时发送（滑杆拖动时合并最新目标）</Check>
+        </div>
       </Card>
     <Card title="工况运行" bodyClass="stack">
       <Field label="工况类型"><SelectField value={workType} onChange={setWorkType} options={[{value:"repeat",label:"循环往复"},{value:"once",label:"单次往返"},{value:"center",label:"前往中心"},{value:"hold",label:"保持当前位置"}]}/></Field>
