@@ -10,11 +10,31 @@ import {ENCODER_PRESETS,STORAGE_PRESETS,TESLA_PROFILE} from "../lib/presets";
 import {hex,spiHalfPeriod,spiHzFromHalf,ssiFrameSeconds} from "../lib/units";
 import {encoderView,encoderCheck} from "../lib/encoder-view";
 import Gauge from "../components/EncoderGauge";
-import {AlignmentPanels} from "./Align";
+import {AlignmentPanels, type AlignmentProgress} from "./Align";
+import type {StepState} from "../components/ui";
 
 export default function MainboardEncoder(){
  const app=useApp(),s=semanticFresh(app.semantic)&&app.semantic.motor===app.motor?app.semantic.state:null;
  const [busy,setBusy]=useState(false),[note,setNote]=useState("");
+ const [alignmentSteps,setAlignmentSteps]=useState<StepState[]>([]);
+ const onAlignmentProgress=(progress:AlignmentProgress)=>{
+   setAlignmentSteps(previous=>{
+     if(progress.stage==="start")return [{idx:1,total:4,label:"启动电角度标定",status:"run",detail:progress.detail??""}];
+     const stageIndex:Record<AlignmentProgress["stage"],number> = {
+       start:1,accepted:2,scanning:2,verifying:3,completed:4,failed:4,cancelled:4,
+     };
+     const idx=stageIndex[progress.stage];
+     const names=["启动电角度标定","主控扫描执行","偏移写回及回读","标定结果确认"];
+     const current=previous.length?previous:[{idx:1,total:4,label:names[0],status:"run" as const,detail:""}];
+     const next:StepState[]=current.map(item=>item.idx<idx&&item.status==="run"?{...item,status:"ok"}:item);
+     const status:StepState["status"]=progress.stage==="failed"?"fail":progress.stage==="cancelled"?"info":progress.stage==="completed"?"ok":"run";
+     const entry:StepState={idx,total:4,label:names[idx-1],status,detail:progress.detail??""};
+     const at=next.findIndex(item=>item.idx===idx);
+     if(at>=0)next[at]=entry;else next.push(entry);
+     return next;
+   });
+ };
+ useEffect(()=>{setAlignmentSteps([]);},[app.motor,app.connected,app.semantic.bootId]);
  const [image,setImage]=useState<number[]|null>(null),[common,setCommon]=useState<number[]|null>(null);
  const [actual,setActual]=useState<number[]|null>(null),[live,setLive]=useState(false);
  const [cfg,setCfg]=useSharedEncoder(app.motor);
@@ -82,33 +102,13 @@ export default function MainboardEncoder(){
          <div className="row"><Button size="sm" variant="primary" icon={<Icon.Save width={14} height={14}/>} disabled={busy||!app.connected||!!s?.motion_active||!!s?.fault} onClick={()=>void run(async()=>{const at=epoch.current;
              await app.stopStream();
              const config=[cfg.cpr,cfg.poles,cfg.frameBits,cfg.spiMode,cfg.spiHz,cfg.idle,cfg.send,mask,cfg.pwm,cfg.csa,offset??0xffffffff];
-             if(config.some(v=>!Number.isInteger(v)||v<0||v>0xffffffff))throw Error("编码器配置必须为非负整数");
-             await semanticMotion.stop(app.motor,true);
-             await semanticMotion.wait(app.motor,15000,r=>r.motor?.drive===0);
-             await semanticMotion.command(app.motor,{kind:"encoder_config",config});
-             await semanticMotion.wait(app.motor,15000,r=>!!r.motor?.config_verified);
-             app.setCal({poles:cfg.poles,cpr:cfg.cpr,pwmMaxCount:cfg.pwm,csaGain:cfg.csa});
-             const reply=await readEncoderSnapshot(app.motor);
-             if(at!==epoch.current)return;
-             if(reply.boot_id!==app.semantic.bootId||!reply.encoder?.[1])throw Error("编码器独立读回无效");
+             if(config.some(v=>!Number.isInteger(v)||v<0||v>0xffffffff))throw Error("编);
              setActual(reply.encoder);
              const differences=checks.filter(([, ,want,index,mask])=>want!==null&&encoderCheck(want,reply.encoder![index],mask).text!=="OK");
              if(differences.length)throw Error(`写入校验不一致：${differences.map(x=>x[1]).join("、")}；输入显示保留`);
              await saveSharedDefaults();
              setNote("OK · 编码器已写入 TMC，当前档案及公共 Flash 配置已保存；输入保持不变。");})}>应用</Button>
-           <Button size="sm" variant="ghost" disabled={busy||!app.connected||!!s?.motion_active} onClick={()=>void run(readActual)}>读取</Button></div></div>
-         <div className="tiny muted" role="status">{busy?"正在配置与回读…":note}</div>
-       </div>
-     </Card>
-     <Card title="配置流程" sub="WRITE · ALIGN" right={<Badge>{busy||s?.drive===1?"执行中":"空闲"}</Badge>}>
-       <div className="grid cols-2" style={{gap:12}}><div className="stack" style={{gap:7}}><div className="stat-label">编码器写入</div><Steps steps={app.stepsByKind.encoder??[]} height={232}/><div className="tiny muted">{s?.config_verified?"主控配置回读已通过":"待配置 / 回读"}</div></div>
-       <div className="stack" style={{gap:7}}><div className="stat-label">电角度对齐</div><Steps steps={app.stepsByKind.calibrate??[]} height={232}/><div className="tiny muted">{s?.align_valid?"W25 / M24 一致，有效":"待标定"}</div></div></div>
-     </Card>
-   </div><div className="col-stack">
-     <Card title="写入校验"><div className="table-scroll"><table className="table"><thead><tr><th>寄存器</th><th>期望</th><th>校验</th></tr></thead><tbody>
-       {checks.map(([addr,name,want,index,mask])=>{const got=actual?actual[index]:null,status=encoderCheck(want,got,mask);return <tr key={addr}><td className="mono">{hex(addr,3)} <span className="muted tiny">{name}</span></td><td className="mono">{want===null?"—":hex(want)}</td><td><Badge tone={status.tone}>{status.text}</Badge></td></tr>;})}
-     </tbody></table></div></Card>
-     <Card title="角度回读" sub="FEEDBACK · LIVE" right={<Button size="sm" variant={live?"danger":"primary"} disabled={!app.connected} title={live?"当前：开启（正在连续回读）· 点击关闭":"当前：关闭 · 点击开启连续回读"} onClick={()=>setLive(v=>!v)}>{live?"关闭":"开启"}</Button>}>
+           <Button size="sm" variant="ghost" disabled={busy||!app.connected||!!s?.motion_active} onClick={()=>void run(readActual)}>读取</Button></div>" sub="FEEDBACK · LIVE" right={<Button size="sm" variant={live?"danger":"primary"} disabled={!app.connected} title={live?"当前：开启（正在连续回读）· 点击关闭":"当前：关闭 · 点击开启连续回读"} onClick={()=>setLive(v=>!v)}>{live?"关闭":"开启"}</Button>}>
        <div className="grid cols-2" style={{gap:8}}><div style={{display:"flex",justifyContent:"center"}}><Gauge angle={((angleActual?.[9]??0)&16383)*360/16384} label="MECHANICAL" sub={`PHI_EXT_A = ${hex(angleActual?.[9]??0,6)}`}/></div><div style={{display:"flex",justifyContent:"center"}}><Gauge angle={((angleActual?.[11]??0)&65535)*360/65536} label="ELECTRICAL" sub={`PHI_E = ${(angleActual?.[11]??0)&65535}`}/></div></div>
        <div className="divider"/><KV rows={[
          ["PHI_EXT_A 原始",<span key="a" className="mono">{hex(angleActual?.[9]??0,6)}</span>],
@@ -119,6 +119,26 @@ export default function MainboardEncoder(){
        ]}/><div className="tiny muted" style={{marginTop:8}}>{live?"实时角度采集中":"尚未开启实时角度；写入校验不显示回读数值"}</div>
      </Card>
    </div></div>
-   <AlignmentPanels onCompleted={()=>read()}/>
+   <AlignmentPanels onCompleted={()=>read()} onProgress={onAlignmentProgress}/>
+   <div className="grid flow-2-1 encoder-monitor-row">
+     <div className="col-stack">
+     <Card title="配置流程" sub="WRITE · ALIGN" right={<Badge>{busy||s?.drive===1?"执行中":"空闲"}</Badge>}>
+       <div className="grid cols-2 encoder-process-grid" style={{gap:12}}><div className="encoder-process-column"><div className="stat-label">编码器写入</div><Steps steps={app.stepsByKind.encoder??[]} height={232}/></div>
+       <div className="encoder-process-column"><div className="stat-label">电角度对齐</div><Steps steps={alignmentSteps.length ? alignmentSteps : app.stepsByKind.calibrate??[]} height={232}/></div></div>
+     </Card>
+     </div>
+     <div className="col-stack">
+     <Card title="角度回读" sub="FEEDBACK · LIVE" right={<Button size="sm" variant={live?"danger":"primary"} disabled={!app.connected} title={live?"当前：开启（正在连续回读）· 点击关闭":"当前：关闭 · 点击开启连续回读"} onClick={()=>setLive(v=>!v)}>{live?"关闭":"开启"}</Button>}>
+       <div className="grid cols-2" style={{gap:8}}><div style={{display:"flex",justifyContent:"center"}}><Gauge angle={((angleActual?.[9]??0)&16383)*360/16384} label="MECHANICAL" sub={`PHI_EXT_A = ${hex(angleActual?.[9]??0,6)}`}/></div><div style={{display:"flex",justifyContent:"center"}}><Gauge angle={((angleActual?.[11]??0)&65535)*360/65536} label="ELECTRICAL" sub={`PHI_E = ${(angleActual?.[11]??0)&65535}`}/></div></div>
+       <div className="divider"/><KV rows={[
+         ["PHI_EXT_A 原始",<span key="a" className="mono">{hex(angleActual?.[9]??0,6)}</span>],
+         ["缩放后 16-bit",<span key="b" className="mono">{(angleActual?.[10]??0)&65535}</span>],
+         ["电角度 16-bit",<span key="c" className="mono">{(angleActual?.[11]??0)&65535}</span>],
+         ["CPR_INV",<span key="d" className="mono">{Math.floor(2**24/Math.max(1,cfg.cpr))}</span>],
+         ["PHI_E_MUL_FACTOR",<span key="e" className="mono">{(angleActual?.[3]??0)&255}</span>],
+       ]}/><div className="tiny muted" style={{marginTop:8}}>{live?"实时角度采集中":"尚未开启实时角度；写入校验不显示回读数值"}</div>
+     </Card>
+     </div>
+   </div>
  </div>;
 }
