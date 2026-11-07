@@ -382,6 +382,31 @@ mod tests {
         assert!(encode(9,&req(Command::Homing{direction:1,step_unit:100,dual:true,config,debug_pi:false})).is_err());
     }
     #[test]
+    fn telemetry_state_is_opt_in_and_validated() {
+        let q=req(Command::TelemetryState);
+        let encoded=encode(9,&q).unwrap();
+        assert_eq!(encoded.len(),23);assert_eq!(encoded[22],5);
+        let mut reply=vec![0u8;60];reply[..22].copy_from_slice(&encoded[..22]);
+        let b=28usize;
+        reply[b]=1;reply[b+1]=0x0f;
+        reply[b+4..b+8].copy_from_slice(&1234u32.to_le_bytes());
+        reply[b+8..b+12].copy_from_slice(&24100u32.to_le_bytes());
+        reply[b+12..b+16].copy_from_slice(&(-120i32).to_le_bytes());
+        reply[b+16..b+24].copy_from_slice(&32768i64.to_le_bytes());
+        reply[b+24..b+28].copy_from_slice(&0x20000000u32.to_le_bytes());
+        let p=decode(9,&q,&reply).unwrap();
+        assert!(p.motor.is_none());
+        let t=p.telemetry.unwrap();
+        assert_eq!(t.sampled_at_ms,1234);
+        assert_eq!(t.bus_voltage_mv,Some(24100));
+        assert_eq!(t.id_raw,Some(-120));
+        assert_eq!(t.target_logical_position.as_deref(),Some("32768"));
+        assert_eq!(t.protection_state,Some(0x20000000));
+        reply[b+1]=0;assert!(decode(9,&q,&reply).unwrap().telemetry.unwrap().bus_voltage_mv.is_none());
+        reply[b+1]=0x80;assert!(decode(9,&q,&reply).is_err());
+        reply[b+1]=0;reply[b+2]=1;assert!(decode(9,&q,&reply).is_err());
+    }
+    #[test]
     fn opt_in_arrival_snapshot_preserves_legacy() {
         let q=req(Command::PositionState);let encoded=encode(9,&q).unwrap();
         assert_eq!(encoded.len(),23);assert_eq!(encoded[22],1);
