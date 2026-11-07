@@ -2064,3 +2064,21 @@ select optgroup {
   .homing-position-target .field { grid-column:1; grid-row:2 / 4; }
   .homing-position-target > .btn { grid-column:2; grid-row:3; }
 }
+
+/* Encoder page: process/result row is above telemetry/process-preview row.
+   The two step windows expand with the process card; no redundant footnotes. */
+.encoder-monitor-row { align-items:stretch; }
+.encoder-monitor-row > .col-stack { min-width:0; }
+.encoder-monitor-row .encoder-process-grid {
+  flex:1 1 auto; display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:12px; min-height:260px; align-items:stretch;
+}
+.encoder-monitor-row .encoder-process-column {
+  display:flex; flex-direction:column; gap:7px; min-height:0; min-width:0;
+}
+.encoder-monitor-row .encoder-process-column > .steps-box {
+  height:auto!important; flex:1 1 auto; min-height:232px;
+}
+@media(max-width:700px) {
+  .encoder-monitor-row .encoder-process-grid { grid-template-columns:minmax(0,1fr); }
+}
