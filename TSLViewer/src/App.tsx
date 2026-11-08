@@ -285,16 +285,20 @@ function Shell() {
             {page === "sequence" && <Sequence />}
             {page === "logs" && <Logs />}
           </div>
-          {/* Keep the tuning session outside the keyed route: navigation must not dispose its results or running job. */}
-          {(tuningVisited || page === "tuning") && <div key="persistent-tuning" hidden={page !== "tuning"}>
-            {app.mode === "direct"
-              ? <Tuning key={app.motor} />
-              : <div className="pi-merged-workspace">
-                  <MainboardPid key={app.motor}/>
-                  <ParameterTuning key={app.motor}/>
-                  <TelemetryPanels/>
-                </div>}
-          </div>}
+          {/* Keep PRBS state across navigation, but never retain an off-screen PID editor
+              or telemetry surface. The editor is mounted exactly once for the selected
+              motor; changing motors cannot leave visual copies of the old cards. */}
+          {(tuningVisited || page === "tuning") && (
+            <div className="persistent-tuning" hidden={page !== "tuning"}>
+              {app.mode === "direct"
+                ? (page === "tuning" ? <Tuning key={app.motor} /> : null)
+                : <div className="pi-merged-workspace">
+                    {page === "tuning" && <MainboardPid key={app.motor} />}
+                    <ParameterTuning key={app.motor} />
+                    {page === "tuning" && <TelemetryPanels />}
+                  </div>}
+            </div>
+          )}
         </main>
       </div>
 
