@@ -7,7 +7,7 @@ import { rampEnabled, rampTask, rampSupplement } from "../lib/motor-ramp";
 import { semanticMotion } from "../lib/semantic-motion";
 import { PercentJog } from "../lib/percent-jog";
 import { HoldMotionButton } from "./HoldMotionButton";
-import { Badge, Button, Card, Check, Field, Notice, NumField, SelectField, Icon, Toggle } from "./ui";
+import { Badge, Button, Card, Field, Notice, NumField, SelectField, Icon, Toggle } from "./ui";
 
 /** Mainboard controls never call the legacy PC motion executor. */
 export function SemanticControls({ children }: { children: ReactNode }) {
@@ -26,7 +26,6 @@ export function SemanticControls({ children }: { children: ReactNode }) {
   if(!percentJog.current)percentJog.current=new PercentJog(value=>sliderChange.current(value),value=>percentLimit.current(value));
   const targetEpoch = useRef(0);
   const [a, setA] = useState(25), [b, setB] = useState(75), [seconds, setSeconds] = useState(6), [cycles, setCycles] = useState(1);
-  const [live, setLive] = useState(true);
   const rampOn=rampEnabled(cfg.mode), positionRamp=cfg.mode==="position_ramp";
   const mode = cfg.mode==="position_ramp"?1:0;
   useEffect(()=>{if(cfg.mode==="velocity_direct"||cfg.mode==="velocity_ramp")draft.setTask(c=>({...c,mode:"position_direct"}));},[app.motor,cfg.mode]);
@@ -107,7 +106,7 @@ export function SemanticControls({ children }: { children: ReactNode }) {
   const sliderSend=useRef(sendLatest); sliderSend.current=sendLatest;
   const changeSlider=(value:number)=>{
     setTarget(value);
-    if(live){latest.current=value;void sendLatest();}
+    latest.current=value;void sendLatest();
   };
   sliderChange.current=changeSlider;
   percentLimit.current=value=>{
@@ -192,7 +191,7 @@ export function SemanticControls({ children }: { children: ReactNode }) {
           <Field label="目标"><NumField label="目标百分比" value={percent}
             onChange={v => {
               // Numeric edits only update the draft. Motion is sent by 前往;
-              // live send remains specific to the slider / hold-to-jog path.
+              // Slider drag sends merged latest targets; numeric edits remain draft-only.
               if (!Number.isFinite(v)) return;
               setTarget(v);
             }} unit="%" min={0} max={100} step={.1} clampOnCommit={false}
@@ -202,7 +201,6 @@ export function SemanticControls({ children }: { children: ReactNode }) {
         </div>
         <div className="homing-position-foot">
           <span className="tiny muted">编辑目标 {percent.toFixed(1)}% · 实际 {s?.coordinate_valid && s.feedback_fresh && s.logical_span && s.logical_position != null ? (Number(s.logical_position)/Number(s.logical_span)*100).toFixed(2)+"%" : "未确认"} · 归零位置 {s?.feedback_fresh && s.coordinate_valid ? s.logical_position : "未确认"} Count</span>
-          <Check disabled={holding} checked={live} onChange={setLive}>实时发送（滑杆拖动时合并最新目标）</Check>
         </div>
       </Card>
     <Card title="工况运行" bodyClass="stack">
