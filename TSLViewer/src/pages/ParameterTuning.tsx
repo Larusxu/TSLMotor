@@ -14,7 +14,7 @@ import type {EndpointResult} from '../lib/pi-auto/endpoint';
 import { Button, Card, Check, Field, NumField, SelectField, Badge, KV, Icon } from "../components/ui";
 const names=["Id · 磁链电流环","Iq · 转矩电流环","速度环","位置环"];
 const states=["待开始","正在辨识","采集完成","已停止"];
-export default function ParameterTuning(){
+export default function ParameterTuning({endpointHost}:{endpointHost:HTMLElement|null}){
   const app=useApp(),draft=useMotorConfiguration(app.motor);
   const [loop,setLoop]=useState<Loop>(1),[shared,setShared]=useState(true),[amplitude,setAmplitude]=useState(200);
   const [duration,setDuration]=useState(1),[range,setRange]=useState("40-60"),[bandwidth,setBandwidth]=useState(100);
@@ -29,8 +29,6 @@ export default function ParameterTuning(){
   const [busy,setBusy]=useState(false),[running,setRunning]=useState(false),[trial,setTrial]=useState(false),[message,setMessage]=useState("");
   const [lowRpm,setLowRpm]=useState(500),[highRpm,setHighRpm]=useState(15000),[endpoint,setEndpoint]=useState<EndpointResult|null>(null);
   const [endpointRunning,setEndpointRunning]=useState(false);
-  const [endpointHost,setEndpointHost]=useState<HTMLElement|null>(null);
-  useEffect(()=>{setEndpointHost(document.getElementById("pi-endpoint-slot"));},[app.mode,app.motor]);
   const mounted=useRef(true);
   const loopSettings=useRef<Partial<Record<Loop,{options:IdentificationOptions;bandwidthHz:number;amplitude:number}>>>({});
   const rememberLoop=()=>{loopSettings.current[loop]={options:{loop,amplitude:rawAmplitude(loop,amplitude),durationMs:Math.round(duration*1000),travelCounts:1,sampling,excitationSampling:excitation},bandwidthHz:bandwidth,amplitude};};
