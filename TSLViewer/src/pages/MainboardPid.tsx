@@ -6,7 +6,7 @@ import { Button, Card, Field, NumField, SelectField, Badge, KV, Icon } from "../
 import { coefToGain, pFrac, iFrac, composePidConfig, CUR_NORM_LABELS, NORM_P_LABELS, NORM_I_LABELS } from "../lib/units";
 import type { PidCfgPayload } from "../lib/types";
 
-export default function MainboardPid() {
+export default function MainboardPid({endpointRef}:{endpointRef?:(node:HTMLDivElement|null)=>void} = {}) {
   const app=useApp(), draft=useMotorConfiguration(app.motor), p=draft.pid;
   const [busy,setBusy]=useState(false), [note,setNote]=useState("");
   const set=(key:keyof PidCfgPayload,v:number)=>{draft.setPid(old=>({...old,[key]:v}));};
@@ -50,7 +50,7 @@ export default function MainboardPid() {
       <div className="tiny muted" role="status" aria-live="polite">{note}</div></div>
     </Card>
     <div className="col-stack"><Card title="单位换算"><KV rows={[["PWM 频率","25.00 kHz"],["电流分辨率","0.20131 mA/LSB"],["4× 满量程","8192 LSB = 1.65 A"],["速度换算","305.4 LSB/RPM"],["位置换算","65536 LSB / 圈"],["调制满幅","18900 = 100%"]]}/></Card>
-      <div id="pi-endpoint-slot" className="pi-endpoint-slot" aria-label="位置直通末段优化"/>
+      <div ref={endpointRef} className="pi-endpoint-slot" aria-label="位置直通末段优化"/>
     </div>
   </div>;
 }
