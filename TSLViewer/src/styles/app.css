@@ -2110,6 +2110,10 @@ select optgroup {
   min-height:232px;
 }
 
+/* A retained PRBS session must not paint off-screen during motor/page changes. */
+.persistent-tuning[hidden] { display: none !important; }
+.persistent-tuning { min-width: 0; }
+
 /* PI tuning unification: preserve original card aesthetic, compact controls. */
 .pi-merged-workspace {
   display:grid; gap:12px; min-width:0;
