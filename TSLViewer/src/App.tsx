@@ -116,6 +116,11 @@ const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
 
 function Shell() {
   const [page, setPage] = useState<Page>("overview");
+  // Match main: preserve the mounted PI/PRBS session when navigating away.
+  const [tuningVisited, setTuningVisited] = useState(false);
+  useEffect(() => { if (page === "tuning") setTuningVisited(true); }, [page]);
+  // Portal target belongs to this exact mounted PI card; never query a stale DOM id.
+  const [endpointHost, setEndpointHost] = useState<HTMLDivElement | null>(null);
   const app = useApp();
   const cylinders = useCylinders(app.connected, page === "cylinders" || page === "overview" || page === "registers", app.acquiring || app.streaming, app.toast);
   const [fps, setFps] = useState(0);
@@ -277,20 +282,28 @@ function Shell() {
             {page === "cylinders" && <Cylinders model={cylinders}/>}
             {page === "encoder" && <Encoder />}
             {page === "homing" && <Homing />}
-            {page === "tuning" && (app.mode === "direct"
-              ? <Tuning key={app.motor} />
-              : <div className="pi-merged-workspace" key={app.motor}>
-                  <MainboardPid />
-                  <ParameterTuning />
-                  <TelemetryPanels />
-                </div>)}
             {page === "registers" && <RegistersConfig cylinders={cylinders} />}
             {page === "looptest" && <LoopTest />}
             {page === "storage" && <Storage />}
             {page === "sequence" && <Sequence />}
             {page === "logs" && <Logs />}
           </div>
-
+          {/* Keep the unified PI session outside the keyed route (as main does for
+              PRBS). Page navigation hides it without unmounting: current jobs,
+              candidates, history and unsaved PI drafts remain intact. */}
+          {(tuningVisited || page === "tuning") && (
+            <section className="persistent-tuning" hidden={page !== "tuning"} aria-hidden={page !== "tuning"}>
+              {app.mode === "direct" ? (
+                <Tuning key={app.motor} />
+              ) : (
+                <div className="pi-merged-workspace" key={app.motor}>
+                  <MainboardPid endpointRef={setEndpointHost} />
+                  <ParameterTuning endpointHost={endpointHost} />
+                  <TelemetryPanels />
+                </div>
+              )}
+            </section>
+          )}
         </main>
       </div>
 
