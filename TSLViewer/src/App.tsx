@@ -116,8 +116,6 @@ const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
 
 function Shell() {
   const [page, setPage] = useState<Page>("overview");
-  const [tuningVisited, setTuningVisited] = useState(false);
-  useEffect(() => { if (page === "tuning") setTuningVisited(true); }, [page]);
   const app = useApp();
   const cylinders = useCylinders(app.connected, page === "cylinders" || page === "overview" || page === "registers", app.acquiring || app.streaming, app.toast);
   const [fps, setFps] = useState(0);
@@ -279,26 +277,20 @@ function Shell() {
             {page === "cylinders" && <Cylinders model={cylinders}/>}
             {page === "encoder" && <Encoder />}
             {page === "homing" && <Homing />}
+            {page === "tuning" && (app.mode === "direct"
+              ? <Tuning key={app.motor} />
+              : <div className="pi-merged-workspace" key={app.motor}>
+                  <MainboardPid />
+                  <ParameterTuning />
+                  <TelemetryPanels />
+                </div>)}
             {page === "registers" && <RegistersConfig cylinders={cylinders} />}
             {page === "looptest" && <LoopTest />}
             {page === "storage" && <Storage />}
             {page === "sequence" && <Sequence />}
             {page === "logs" && <Logs />}
           </div>
-          {/* Keep PRBS state across navigation, but never retain an off-screen PID editor
-              or telemetry surface. The editor is mounted exactly once for the selected
-              motor; changing motors cannot leave visual copies of the old cards. */}
-          {(tuningVisited || page === "tuning") && (
-            <div className="persistent-tuning" hidden={page !== "tuning"}>
-              {app.mode === "direct"
-                ? (page === "tuning" ? <Tuning key={app.motor} /> : null)
-                : <div className="pi-merged-workspace">
-                    {page === "tuning" && <MainboardPid key={app.motor} />}
-                    <ParameterTuning key={app.motor} />
-                    {page === "tuning" && <TelemetryPanels />}
-                  </div>}
-            </div>
-          )}
+
         </main>
       </div>
 
