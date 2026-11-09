@@ -1,4 +1,4 @@
-﻿import fs from 'node:fs';
+import fs from 'node:fs';
 import ts from 'typescript';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -31,7 +31,7 @@ try {
  console.log('BEFORE',JSON.stringify(before.motor));
  if(before.motor.fault||before.motor.motion_active)throw Error('M11 not idle and healthy');
  let printed=0;
- const result=await commission.align(11,{scanDegrees:720,stepDegrees:90,settleMs:700,currentMa:300,clearance:true},r=>{if(Date.now()-printed>2000){console.log('ALIGN',r.motor?.drive,r.motor?.last_error,r.motor?.fault);printed=Date.now();}});
+ const result=await commission.align(11,{scanDegrees:720,stepDegrees:90,settleMs:700,currentMa:300},r=>{if(Date.now()-printed>2000){console.log('ALIGN',r.motor?.drive,r.motor?.last_error,r.motor?.fault);printed=Date.now();}});
  const homeAfter=await motion.command(11,{kind:'homing_config_read'});
  if(JSON.stringify(homeBefore.homing_config)!==JSON.stringify(homeAfter.homing_config))throw Error('Homing configuration changed');
  fs.writeFileSync(report+'-result.json',JSON.stringify(result,null,2));

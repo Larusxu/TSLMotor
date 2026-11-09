@@ -36,4 +36,3 @@ class CommissionService {
   }
 }
 export const semanticCommission = new CommissionService();
-

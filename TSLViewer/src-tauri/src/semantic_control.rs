@@ -229,6 +229,16 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String>{
 mod tests {
     use super::*;
     #[test]
+    fn alignment_payload_has_no_clearance_option() {
+        let command:Command=serde_json::from_str(r#"{"kind":"alignment","scan_degrees":720,"step_degrees":90,"settle_ms":700,"current_ma":300}"#).unwrap();
+        let p=encode(11,&req(command)).unwrap();
+        assert_eq!(p.len(),31);
+        assert_eq!(&p[22..],&[2,0xd0,2,90,0,0xbc,2,0x2c,1]);
+        // Old clients may still send the removed property. It has no effect.
+        let old:Command=serde_json::from_str(r#"{"kind":"alignment","scan_degrees":720,"step_degrees":90,"settle_ms":700,"current_ma":300,"clearance":true}"#).unwrap();
+        assert_eq!(encode(11,&req(old)).unwrap(),p);
+    }
+    #[test]
     fn ramp_apply_extension_fits_gateway_frame() {
         let mut payload=vec![0;105];payload[92]=1;
         assert_eq!(encode(1,&req(Command::ApplyConfiguration{payload})).unwrap().len(),127);
