@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import ts from 'typescript';
 const source=fs.readFileSync(new URL('../src/lib/semantic-motion.ts',import.meta.url),'utf8').split(String.fromCharCode(10)).filter(s=>!s.startsWith('import ')).join(String.fromCharCode(10));
-const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
+const js=ts.transpileModule('const acquisitionLane={busy:()=>false};const readTelemetry=async()=>({result:12});\n'+source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
 const {SemanticMotion}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
 const snapshot=(extra={})=>({boot_id:'123',pending:false,motor:{drive:2,pending_action:0,mode:0,limits_valid:true,config_verified:true,motion_active:false,fault:0,last_error:0,...extra}});
 {const s=new SemanticMotion();let checks=0;const calls=[];s.open=async()=>{};s.prepared={motor:9,mode:0,speed:4581298,boot:'123'};s.call=async(m,c)=>{calls.push(c.kind);return m===0?{device:{stopping:++checks<3}}:snapshot();};await s.taskCommand(9,0,4581298,{kind:'jog_start',velocity_raw:4581298,lease_ms:700});assert(checks>=3);assert.equal(calls.filter(k=>k==='jog_start').length,1);assert.equal(calls.at(-1),'jog_start');}

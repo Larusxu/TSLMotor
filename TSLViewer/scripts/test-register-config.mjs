@@ -1,0 +1,12 @@
+﻿import fs from 'node:fs';import ts from 'typescript';import assert from 'node:assert/strict';
+const data=s=>'data:text/javascript;base64,'+Buffer.from(s).toString('base64');
+let codec=ts.transpileModule(fs.readFileSync('src/lib/motor-profile-ui.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ES2022,target:ts.ScriptTarget.ES2022}}).outputText;
+codec=codec.replace(/^import .*?;\s*$/gm,'');
+const m=await import(data(codec));globalThis.__archiveCodec=m;
+let src=ts.transpileModule(fs.readFileSync('src/lib/archive-editor.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ES2022,target:ts.ScriptTarget.ES2022}}).outputText.replace(/^import .*?;\s*$/gm,'');
+src='const {word,putWord,crc32,COUNTS_PER_RPM,MA_PER_RAW}=globalThis.__archiveCodec;\n'+src;
+const a=await import(data(src)),defaults=Array(128).fill(0),common=Array(128).fill(0);
+for(const [off,v] of [[24,34140],[28,179*65536+384],[32,179*65536+384],[36,250*65536],[40,1000*65536],[44,0x1000100],[48,5000000],[52,20000],[56,16384],[60,2000000],[64,4800],[76,0x0310010e],[80,1],[92,100],[96,100],[100,91],[104,1250],[108,1000],[112,15000],[116,1000]])m.putWord(defaults,off,v);
+defaults[20]=180;defaults[22]=60;
+for(let motor=1;motor<=16;motor++){const d=a.seedArchive(motor,defaults,common);assert.equal(d.main[12],motor);assert.equal(m.word(d.main,32),179*65536+384);assert.equal(m.word(d.main,40),250*65536);assert.equal(m.word(d.main,44),1000*65536);assert.equal(m.word(d.extra,44),100);assert.equal(m.word(d.main,120),m.crc32(d.main.slice(0,120)));assert.equal(m.word(d.extra,120),m.crc32(d.extra.slice(0,120)));assert.equal(d.main[16]&1,0);assert(Number.isInteger(a.fieldValue(d,a.archiveGroups['运动'][1])));}
+console.log('PASS default archive generation M1-M16, PI, Ramp, CRC, calibration reset, integer display');

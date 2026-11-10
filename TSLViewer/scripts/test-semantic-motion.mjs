@@ -14,6 +14,7 @@ globalThis.__motionInvoke=async(name,args)=>{
    device:{capabilities:3,request_floor:q.request_id,stopping:false},motor:args.motor?{logic_power:powered,config_verified:powered,limits_valid:powered,drive:0,motion_active:false,pending_action:0,fault:0,last_error:0}:null};
 };
 let source=fs.readFileSync(new URL('../src/lib/semantic-motion.ts',import.meta.url),'utf8').replace('import { invokeCommand } from "./api";','const invokeCommand=(...a:any[])=>globalThis.__motionInvoke(...a);');
+source=source.replace('import { readTelemetry, type SemanticReply } from "./semantic-state";', 'const readTelemetry=(motor:number,id:number)=>invokeCommand("motor_semantic",{motor,request:{request_id:id,boot_id:"0",session_id:0,task_id:0,command:{kind:"telemetry_state"}}});').replace('import { acquisitionLane } from "./pi-auto/acquisition";', 'const acquisitionLane={busy:()=>false};');
 const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
 const {SemanticMotion}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
 const m=new SemanticMotion();let errors=0;m.subscribeErrors(()=>errors++);
