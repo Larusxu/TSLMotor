@@ -34,13 +34,15 @@ export function useSharedDefaults() {
  const data=useSyncExternalStore(subscribe,()=>defaults);
  return {data,saved:savedDefaults,edit:editDefaults,setWord:setDefaultWord};
 }
-export function acceptDefaults(data:number[]) {
+export function acceptDefaults(data:number[],preserveEdits=false) {
  if(data.length!==128||String.fromCharCode(...data.slice(0,4))!=="MPD3"||word(data,120)!==crc32(data.slice(0,120)))throw Error("公共配置版本或 CRC 无效");
- defaults=[...data];savedDefaults=[...data];
+ savedDefaults=[...data];
+ if(preserveEdits&&defaults){notify();return [...data];}
+ defaults=[...data];
  home=[0,1,2,3,4].map(i=>data[8+i*2]|data[9+i*2]<<8).concat([0,0,data[18]|data[19]<<8]);
  savedHome=[...home];syncEncoder();notify();return defaults;
 }
-export async function readSharedDefaults() {return acceptDefaults((await storageJob(0,7)).data);}
+export async function readSharedDefaults(preserveEdits=false) {return acceptDefaults((await storageJob(0,7)).data,preserveEdits);}
 async function commitSharedDefaults(submitted:number[]) {
  if(!defaults)throw Error("请先读取主控公共配置");
  putWord(submitted,120,crc32(submitted.slice(0,120)));
@@ -66,10 +68,12 @@ function syncHome() {
  home.slice(0,5).forEach((x,i)=>{defaults![8+i*2]=x&255;defaults![9+i*2]=x>>>8;});
  defaults[18]=home[7]&255;defaults[19]=home[7]>>>8;
 }
-export async function readSharedHome(motor:number) {
+export async function readSharedHome(motor:number,preserveEdits=false) {
  const r=await semanticMotion.command(motor,{kind:"homing_config_read"});
  if(!r.homing_config)throw Error("主控未返回找零参数");
- home=[...r.homing_config];savedHome=[...home];syncHome();notify();return home;
+ savedHome=[...r.homing_config];
+ if(!preserveEdits){home=[...r.homing_config];syncHome();}
+ notify();return r.homing_config;
 }
 export async function writeSharedHome(motor:number) {
  const submitted=[...home];
@@ -95,4 +99,9 @@ export function useSharedEncoder(motor:number) {
  return [cfg,setCfg] as const;
 }
 
-export async function ensureSharedDefaults(){return defaults??readSharedDefaults();}
+let defaultsRead:Promise<number[]>|null=null;
+export async function ensureSharedDefaults(){
+ if(defaults)return defaults;
+ if(!defaultsRead)defaultsRead=readSharedDefaults().finally(()=>{defaultsRead=null;});
+ return defaultsRead;
+}

@@ -25,7 +25,7 @@ export function SemanticControls({ children }: { children: ReactNode }) {
   const percentJog = useRef<PercentJog | null>(null);
   if(!percentJog.current)percentJog.current=new PercentJog(value=>sliderChange.current(value),value=>percentLimit.current(value));
   const targetEpoch = useRef(0);
-  const [a, setA] = useState(25), [b, setB] = useState(75), [seconds, setSeconds] = useState(6), [cycles, setCycles] = useState(1);
+  const [a, setA] = useState(25), [b, setB] = useState(75), [dwellSeconds, setDwellSeconds] = useState(0), [cycles, setCycles] = useState(1);
   const rampOn=rampEnabled(cfg.mode), positionRamp=cfg.mode==="position_ramp";
   const mode = cfg.mode==="position_ramp"?1:0;
   useEffect(()=>{if(cfg.mode==="velocity_direct"||cfg.mode==="velocity_ramp")draft.setTask(c=>({...c,mode:"position_direct"}));},[app.motor,cfg.mode]);
@@ -166,7 +166,7 @@ export function SemanticControls({ children }: { children: ReactNode }) {
 
         </section>
       </div>
-      {error && <div className="motion-message-slot" role="status"><Notice tone="warn">{error}。先读取状态或停止运行，再应用并回读配置；不会自动重发运动。</Notice></div>}
+      {error && <div className="motion-message-slot" role="status"><Notice tone="warn">{error}</Notice></div>}
     </Card>
     {children}
     <div className="grid cols-2 position-work-grid">
@@ -207,9 +207,9 @@ export function SemanticControls({ children }: { children: ReactNode }) {
       <Field label="工况类型"><SelectField value={workType} onChange={setWorkType} options={[{value:"repeat",label:"循环往复"},{value:"once",label:"单次往返"},{value:"center",label:"前往中心"},{value:"hold",label:"保持当前位置"}]}/></Field>
       <div className="grid cols-4" style={{gap:10}}><Field label="A"><NumField value={a} onChange={setA} min={0} max={100} unit="%" /></Field>
         <Field label="B"><NumField value={b} onChange={setB} min={0} max={100} unit="%" /></Field>
-        <Field label="往返周期"><NumField value={seconds} onChange={setSeconds} min={.2} max={600} unit="s" /></Field>
+        <Field label="到位间隔"><NumField value={dwellSeconds} onChange={setDwellSeconds} min={0} max={3600} step={.1} unit="s" /></Field>
         <Field label="循环数"><NumField value={cycles} onChange={setCycles} min={1} max={10000} /></Field></div>
-      <div className="row-wrap"><Button variant="primary" disabled={!can || !range} onClick={() => void run(() => workType==="hold" ? semanticMotion.stop(app.motor) : workType==="center" ? motionCommand({kind:"logical_move",position:count(50)}) : motionCommand({ kind: "logical_work", a: count(a), b: count(b), half_period_ms: Math.round(seconds * 500), cycles:workType==="once"?1:cycles }))}>执行工况</Button>
+      <div className="row-wrap"><Button variant="primary" disabled={!can || !range} onClick={() => void run(() => workType==="hold" ? semanticMotion.stop(app.motor) : workType==="center" ? motionCommand({kind:"logical_move",position:count(50)}) : motionCommand({ kind: "logical_work", a: count(a), b: count(b), dwell_ms: Math.round(dwellSeconds * 1000), cycles:workType==="once"?1:cycles }))}>执行工况</Button>
       <Button variant="ghost" onClick={() => stop()}>取消工况并停止</Button></div>
 
     </Card></div>

@@ -18,6 +18,7 @@ npm install
 npm run app:dev      # 完整桌面应用（Tauri 窗口，接真实串口）
 npm run build        # 类型检查 + 前端产物
 npm run app:build    # 生成 Windows 安装包（msi / nsis）
+npm run app:package  # 只生成 NSIS 安装包（单个 setup.exe）
 ```
 
 ### 1.1 一键启动脚本
@@ -62,6 +63,27 @@ pm run app:dev）时用下面的脚本。
 | 可执行文件 | `src-tauri/target/release/tslviewer.exe` |
 | 安装包 | `src-tauri/target/release/bundle/` |
 | 前端静态产物 | `dist/` |
+
+### 1.3 打包脚本（NSIS 安装包）
+
+`scripts\package.bat` 双击即可（等价于 `.\scripts\package.ps1`）：检查工具链 → 检查是否有 TSL Viewer 正在运行（会锁住 exe）→ 执行 `npm run app:package`（即 `tauri build --bundles nsis`，前端 + Rust release + NSIS）→ 报告安装包路径与大小，全部输出落盘到 `build-logs\package-<时间戳>.log`。
+
+```powershell
+.\scripts\package.ps1                # 直接生成 NSIS 安装包
+.\scripts\package.ps1 -Test          # 先跑 cargo test --lib，通过才打包
+.\scripts\package.ps1 -Clean         # 先删 dist\、release\tslviewer.exe、bundle\ 再打包
+.\scripts\package.ps1 -StopRunning   # 自动关闭正在运行的 TSL Viewer（否则会锁住 exe）
+```
+
+| 选项 | 作用 |
+| --- | --- |
+| 默认 | `npm run app:package`：tsc 类型检查 + vite + cargo release + NSIS，**只出安装包** |
+| `-Test` | 打包前跑 Rust 单测，失败立即终止 |
+| `-Clean` | 删 `dist\`、`release\tslviewer.exe`、`bundle\`；**不跑 `cargo clean`** |
+| `-StopRunning` | 结束正在运行的 `tslviewer.exe`；不加则检测到就报错退出 |
+
+产物：`src-tauri\target\release\bundle\nsis\TSL Viewer_<版本>_x64-setup.exe`。首次打包时 Tauri 会自动下载 NSIS 工具到 `%LOCALAPPDATA%\tauri`（需联网）。
+与 `build.ps1 -Bundle` 的区别：本脚本只负责发版安装包，不构建单文件 exe、不自动启动程序。
 
 
 ---
@@ -185,6 +207,7 @@ TSLViewer/
 │  └─ tauri.conf.json         窗口默认 1440×900，最小 1120×700；启动时按显示器自动收敛
 ├─ scripts/
 │  ├─ build.ps1 / build.bat   构建：默认只出 exe，-Bundle 才打安装包
+│  ├─ package.ps1 / .bat      打包：只生成 NSIS 安装包（发版用）
 │  ├─ start.ps1 / start.bat   一键启动：直接运行已构建的 tslviewer.exe
 │  ├─ start-web.ps1 / .bat    浏览器排版预览（无模拟数据、无串口后端）
 ├─ build-logs/                构建日志（gitignored）

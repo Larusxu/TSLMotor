@@ -11,7 +11,7 @@ export const archiveGroups:Record<string,ArchiveField[]>={
  "Ramp":[{label:"加速时间",offset:44,extra:true,unit:"ms"},{label:"减速时间",offset:48,extra:true,unit:"ms"},{label:"位置容差",offset:52,extra:true,scale:360/65536,unit:"°"},{label:"容差延时",offset:56,extra:true,scale:1/25,unit:"ms"},{label:"速度前馈",offset:60,extra:true,choices:["关闭","开启"]},{label:"Ramp 补充有效",offset:64,extra:true,choices:["关闭","开启"]},{label:"结束速度",offset:116,unit:"raw"}],
  "保护":[{label:"持续过流时间",offset:84,unit:"ms"},{label:"保护采样周期",offset:88,unit:"ms"},{label:"反馈超时",offset:92,unit:"ms"},{label:"停止超时",offset:96,unit:"ms"},{label:"行程边距",offset:100,unit:"Count"}],
 };
-export function fieldValue(d:ArchiveDraft,f:ArchiveField){const p=f.extra?d.extra:d.main;let v=f.bytes===1?p[f.offset]:f.bytes===2?p[f.offset]|p[f.offset+1]<<8:word(p,f.offset);v=(v>>>(f.shift??0))&(f.mask??0xffffffff);return Number(((v>>>0)*(f.scale??1)).toFixed(4));}
+export function fieldValue(d:ArchiveDraft,f:ArchiveField){const p=f.extra?d.extra:d.main;let v=f.bytes===1?p[f.offset]:f.bytes===2?p[f.offset]|p[f.offset+1]<<8:word(p,f.offset);v=(v>>>(f.shift??0))&(f.mask??0xffffffff);return Number(((v>>>0)*(f.scale??1)).toFixed(f.unit==="°"?2:0));}
 export function editArchive(d:ArchiveDraft,f:ArchiveField,value:number):ArchiveDraft{
  const next={...d,main:[...d.main],extra:[...d.extra]},p=f.extra?next.extra:next.main;
  const raw=Math.round(value/(f.scale??1)),shift=f.shift??0,mask=f.mask??0xffffffff;

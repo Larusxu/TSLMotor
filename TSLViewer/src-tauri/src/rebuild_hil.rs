@@ -476,7 +476,7 @@ mod tests {
                     if arrived.mode!=mode||!arrived.span_valid||!arrived.align_valid||!arrived.logic_power{return Err("Position task lost selected mode/home/power".into());}
                     self.log.push(serde_json::json!({"four_position_mode":mode,"goal":goal,"arrived":arrived}));
                 }
-                self.call(9,Command::LogicalWork{a:(middle-excursion).to_string(),b:(middle+excursion).to_string(),half_period_ms:6000,cycles:1})?;
+                self.call(9,Command::LogicalWork{a:(middle-excursion).to_string(),b:(middle+excursion).to_string(),dwell_ms:0,cycles:1})?;
                 let done=self.wait(40,|s|!s.motion_active&&s.pending_action==0)?;
                 if done.mode!=mode||!done.span_valid||!done.logic_power{return Err("Work lost mode/home/power".into());}
                 self.log.push(serde_json::json!({"four_work_mode":mode,"done":done}));
@@ -621,7 +621,7 @@ mod tests {
     #[ignore="Real M9 motion/storage; requires MOTO_REBUILD_HIL=storage|motion and explicit ports"]
     fn hardware_m9_acceptance(){
         let scenario=std::env::var("MOTO_REBUILD_HIL").expect("Explicit scenario required");
-        assert!(["storage","motion","safety","partition","travel","jog","jog_home","configuration","homing_policy","initialization","pi_calibration","rtmi","rtmi_preflight","rtmi_dump","enable_entry","uart_isolation","passive_state","passive_watch","config_probe","mode_apply","apply_idle","board_policy","modes","four_tasks","contact_online","pi_overshoot","jog_coast","recovery_idle"].contains(&scenario.as_str()));
+        assert!(["dualcore_rtmi","dualcore","storage","motion","safety","partition","travel","jog","jog_home","configuration","homing_policy","initialization","pi_calibration","rtmi","rtmi_preflight","rtmi_dump","enable_entry","uart_isolation","passive_state","passive_watch","config_probe","mode_apply","apply_idle","board_policy","modes","four_tasks","contact_online","pi_overshoot","jog_coast","recovery_idle"].contains(&scenario.as_str()));
         let port=std::env::var("MOTO_STORAGE_RS485").unwrap_or("COM10".into());
         let mode=std::env::var("MOTO_HIL_MODE").unwrap_or("main485".into());
         let baud=if mode=="maincan"{2000000}else{1500000};
@@ -650,6 +650,68 @@ mod tests {
         h.q.request_id=d.device.unwrap().request_floor;h.q.session_id=0x52454232;
         h.call(0,Command::Open).unwrap();
         let result=(||->Result<(),String>{
+            if scenario=="dualcore_rtmi" {
+                let initial=h.call(9,Command::GetState)?.motor.ok_or("No M9")?;
+                if initial.drive!=0||initial.motion_active||initial.fault!=0{return Err("RTMI requires disabled M9".into());}
+                let saved=h.storage(1,0x7a0001)?;
+                let capture=(||->Result<(),String>{
+                    for sampling in [11u8,9,7] {
+                        h.call(9,Command::RtmiConfig{enabled:true,sampling,addresses:[0x154,0x153,0x155,0x251,65535,65535,65535],decimation:1})?;
+                        {
+                            let deadline=Instant::now()+Duration::from_secs(10);
+                            loop { thread::sleep(Duration::from_millis(50));h.call(0,Command::Pulse)?;
+                                let r=h.call(9,Command::GetState)?;
+                                if !r.pending {break;}if Instant::now()>deadline{return Err("RTMI configuration deadline".into());}
+                            }
+                        }
+                        let start=h.call(9,Command::RtmiState{cursor:u32::MAX})?.rtmi.ok_or("No RTMI start")?;
+                        if start[16]!=1||start[17]!=sampling{return Err("RTMI start configuration not active".into());}
+                        let seq=u32::from_le_bytes(start[0..4].try_into().unwrap());let at=Instant::now();
+                        for _ in 0..10 {thread::sleep(Duration::from_millis(500));h.call(0,Command::Pulse)?;}
+                        let end=h.call(9,Command::RtmiState{cursor:u32::MAX})?.rtmi.ok_or("No RTMI end")?;
+                        if start[12..16]!=end[12..16]||end[16]!=1||end[17]!=sampling{return Err("RTMI generation/configuration changed during measurement".into());}
+                        let elapsed=at.elapsed().as_secs_f64();let total=u32::from_le_bytes(end[0..4].try_into().unwrap()).wrapping_sub(seq);
+                        let errors=u32::from_le_bytes(end[8..12].try_into().unwrap());let hz=total as f64/4.0/elapsed;
+                        h.log.push(serde_json::json!({"dualcore_rtmi_sampling":sampling,"channel_hz":hz,"samples":total,"seconds":elapsed,"crc_errors":errors,"motion_sent":false,"download_ring_intentionally_not_drained":true}));
+                        if errors!=0||hz<1800.0{return Err(format!("RTMI rate/error failure: {hz} Hz, {errors} errors"));}
+                        h.call(9,Command::RtmiConfig{enabled:false,sampling:255,addresses:[65535;7],decimation:1})?;
+                        {
+                            let deadline=Instant::now()+Duration::from_secs(10);
+                            loop { thread::sleep(Duration::from_millis(50));h.call(0,Command::Pulse)?;
+                                let r=h.call(9,Command::GetState)?;
+                                if !r.pending {break;}if Instant::now()>deadline{return Err("RTMI configuration deadline".into());}
+                            }
+                        }
+                    }
+                    Ok(())
+                })();
+                let stopped=h.call(9,Command::RtmiConfig{enabled:false,sampling:255,addresses:[65535;7],decimation:1});
+                if stopped.is_ok(){{
+                            let deadline=Instant::now()+Duration::from_secs(10);
+                            loop { thread::sleep(Duration::from_millis(50));h.call(0,Command::Pulse)?;
+                                let r=h.call(9,Command::GetState)?;
+                                if !r.pending {break;}if Instant::now()>deadline{return Err("RTMI configuration deadline".into());}
+                            }
+                        }}
+                capture?;stopped?;
+                let after=h.storage(1,0x7a0002)?;
+                if after.data!=saved.data||after.generation!=saved.generation{return Err("RTMI changed W25".into());}
+                return Ok(());
+            }
+            if scenario=="dualcore" {
+                let initial=h.call(9,Command::PositionState)?.motor.ok_or("No M9")?;
+                if initial.fault!=0||initial.motion_active {return Err("M9 not idle".into());}
+                let policy=h.call(9,Command::HomingConfigRead)?.homing_config.ok_or("No home policy")?;
+                h.log.push(serde_json::json!({"unchanged_homing_policy":policy}));
+                if !initial.span_valid {
+                    h.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+                    h.call(9,Command::HomingStart{direction:1,step_unit:100,dual:true})?;
+                    h.wait(160,|s|s.drive==0&&s.span_valid&&s.config_verified&&s.feedback_fresh)?;
+                }
+                h.call(9,Command::Permit{enabled:false,lease_ms:0})?;
+                h.wait_idle(15,|s|s.drive==0&&!s.motion_active)?;
+                return Ok(());
+            }
             if scenario=="jog_coast" {return h.jog_coast_suite();}
             if scenario=="pi_overshoot" {return h.pi_overshoot_suite();}
             if scenario=="contact_online" {
@@ -1139,7 +1201,7 @@ mod tests {
             if scenario=="safety" {
                 h.wait(10,|s|s.drive==0&&s.velocity_raw==0)?;
                 h.call(9,Command::DriveEnable)?;h.wait(15,|s|s.drive==2)?;
-                h.call(9,Command::LogicalWork{a:(pos-target-2048).to_string(),b:(pos-target-4096).to_string(),half_period_ms:8000,cycles:10})?;
+                h.call(9,Command::LogicalWork{a:(pos-target-2048).to_string(),b:(pos-target-4096).to_string(),dwell_ms:0,cycles:10})?;
                 h.wait(5,|s|s.motion_active&&s.motion_owner==5)?;
                 h.call(9,Command::Stop{after:2})?;
                 h.wait(10,|s|s.drive==0&&!s.motion_active&&s.pending_action==0&&s.velocity_raw==0)?;

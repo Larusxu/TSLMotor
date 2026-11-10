@@ -252,9 +252,8 @@ impl Link {
         p.sp.call(motor,op,data).map_err(|e|LinkError::Io(e.to_string()))
     }
 
-    /// Point the gateway's forwarded TMC traffic at another motor. The main
-    /// controller keeps answering for one UART at a time, so this is a focus
-    /// switch: downstream buffers of the new motor are flushed on the way in.
+    /// Select the destination for subsequent requests. Selection itself must
+    /// not acquire the legacy UART owner or clear the MCU worker's RX buffer.
     pub fn focus_motor(&self, motor: u8) -> Result<()> {
         if !(1..=16).contains(&motor) {
             return Err(LinkError::ValueError("电机号必须为 1..=16".into()));
@@ -267,11 +266,7 @@ impl Link {
         if !p.sp.gateway() || p.sp.motor == motor {
             return Ok(());
         }
-        p.sp.call(motor, 8, &[]).map_err(|e| LinkError::Io(e.to_string()))?;
         p.sp.motor = motor;
-        p.sp
-            .clear(serialport::ClearBuffer::Input)
-            .map_err(|e| LinkError::Io(e.to_string()))?;
         Ok(())
     }
 
@@ -283,7 +278,7 @@ impl Link {
             return Err(LinkError::ValueError("请先停止采集再检测 TMC".into()));
         }
         let attempts = attempts.clamp(1, 20);
-        let origin = self.with_port(|p| Ok(p.sp.motor))?;
+        let (origin, gateway) = self.with_port(|p| Ok((p.sp.motor, p.sp.gateway())))?;
         let mut out = Vec::with_capacity(motors.len());
         for &motor in motors {
             if !(1..=16).contains(&motor) {
@@ -291,7 +286,10 @@ impl Link {
             }
             let mut chip_id = None;
             let mut tries = 0;
-            if self.focus_motor(motor).is_ok() {
+            // Raw probing needs its own legacy lease. Merely selecting a motor
+            // in the UI does not acquire it or interfere with semantic tasks.
+            if self.focus_motor(motor).is_ok()
+                && (!gateway || self.gateway_control(motor, 8, &[]).is_ok()) {
                 for i in 0..attempts {
                     tries = i + 1;
                     match self.read_reg(regs::CHIP_ID) {

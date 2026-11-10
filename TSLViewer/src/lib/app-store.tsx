@@ -14,7 +14,7 @@ import { loadConnectionMode, saveConnectionMode } from "./connection-preferences
 import { applyAlignmentResult } from "./alignment";
 import { convertSignal, SIGNALS, TESLA_PROFILE, type Signal } from "./presets";
 import { ScopeStore } from "./scope";
-import { SemanticStateSource, type SemanticView } from "./semantic-state";
+import { SemanticStateSource, mergeMotorTelemetry, retainMotorTelemetry, type SemanticView } from "./semantic-state";
 import { semanticMotion } from "./semantic-motion";
 import { HomingNotification } from "./homing-notification";
 import { readRatedRpm, saveRatedRpm } from "./board-speed";
@@ -773,9 +773,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const notice=homingNotification.current.observe(m,r);
     if(notice)toast(notice.tone,notice.text);
     if (!m && r.device) { setSemantic(previous => previous.bootId === r.boot_id ? ({ ...previous, device: r.device }) : ({ motor, bootId: r.boot_id, receivedAt: 0, device: r.device, state: null, error: "主控已重启，等待电机状态" })); return; }
-    if (m !== motor || !r.motor) return;
+    if (m !== motor) return;
+    if (!r.motor) {
+      if (!r.result && r.telemetry) setSemantic(previous =>
+        previous.motor === m && previous.bootId === r.boot_id && previous.taskId === r.task_id && previous.state
+          ? { ...previous, state: mergeMotorTelemetry(previous.state, r.telemetry!) } : previous);
+      return;
+    }
     setSemantic(previous => {
-      const state = { ...r.motor! };
+      const state = previous.bootId === r.boot_id && previous.taskId === r.task_id
+        ? retainMotorTelemetry({ ...r.motor! }, previous.state) : { ...r.motor! };
       if (state.arrival_phase == null && !r.pending && previous.bootId===r.boot_id && previous.taskId===r.task_id &&
           previous.state?.motion_active===state.motion_active && previous.state?.mode===state.mode && !state.fault && state.feedback_fresh) {
         for (const key of ["arrival_phase","arrival_flags","arrival_ms","arrival_tolerance","arrival_dwell_ms"] as const)

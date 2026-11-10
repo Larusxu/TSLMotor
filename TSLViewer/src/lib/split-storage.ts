@@ -1,4 +1,5 @@
 import { invokeCommand } from "./api";
+import { semanticMotion } from "./semantic-motion";
 
 export type StorageReply = {
   id: number; phase: number; result: number; motor: number; operation: number;
@@ -23,6 +24,9 @@ export class StorageError extends Error {
   }
 }
 async function executeStorageJob(motor: number, operation: 1 | 3 | 4 | 5 | 7 | 8 | 9 | 10 | 11, payload?: number[]) {
+  // Passive page reads do not acquire motion ownership. Explicit writes use
+  // the shared configuration session instead of an expired legacy OPEN.
+  if ([3,5,8,10,11].includes(operation)) await semanticMotion.ensureConfigurationSession();
   const id = nextId();
   if (operation === 3 || operation === 8 || operation === 11) {
     if (!payload || payload.length !== 128) throw new Error("W25 档案必须是 128 字节 ENC1/ENC2/MTR1 记录");
@@ -32,6 +36,13 @@ async function executeStorageJob(motor: number, operation: 1 | 3 | 4 | 5 | 7 | 8
     }
   }
   let r = await send(motor, operation, id);
+  // A rejected READ has not started any work. Only these passive operations
+  // may wait for a short-lived shared-flash transaction; never replay saves.
+  const readDeadline = Date.now()+1200;
+  while ([1,7,9].includes(operation) && r.result===-7 && r.phase===5 && Date.now()<readDeadline) {
+    await new Promise(resolve=>setTimeout(resolve,80));
+    r=await send(motor,operation,id);
+  }
   const deadline = Date.now() + 60000;
   while (r.phase === 2 || r.phase === 3) {
     if (Date.now() >= deadline) throw new Error("等待超时：结果未知，请查询设备，勿重复下发保存");

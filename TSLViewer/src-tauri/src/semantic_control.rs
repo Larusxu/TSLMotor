@@ -40,8 +40,8 @@ pub enum Command {
     JogRenew,
     Move { position: String },
     LogicalMove { position: String },
-    LogicalWork { a: String, b: String, half_period_ms: u32, cycles: u32 },
-    Work { a: String, b: String, half_period_ms: u32, cycles: u32 },
+    LogicalWork { a: String, b: String, #[serde(default)] dwell_ms: u32, cycles: u32 },
+    Work { a: String, b: String, #[serde(default)] dwell_ms: u32, cycles: u32 },
     Stop { after: u8 }, EStop, ClearFault, Status,
 }
 fn rtmi_decimation_default()->u8{1}
@@ -127,7 +127,7 @@ pub fn encode(motor:u8,q:&Request)->Result<Vec<u8>,String>{
         }
         Command::Homing{..}=>return Err("请先写入并回读主控找零参数，再单独开始找零".into()),
         Command::Move{position}|Command::LogicalMove{position}=>p.extend(count(position)?.to_le_bytes()),
-        Command::Work{a,b,half_period_ms,cycles}|Command::LogicalWork{a,b,half_period_ms,cycles}=>{p.extend(count(a)?.to_le_bytes());p.extend(count(b)?.to_le_bytes());add32(&mut p,*half_period_ms);add32(&mut p,*cycles);}
+        Command::Work{a,b,dwell_ms,cycles}|Command::LogicalWork{a,b,dwell_ms,cycles}=>{p.extend(count(a)?.to_le_bytes());p.extend(count(b)?.to_le_bytes());add32(&mut p,0);add32(&mut p,*cycles);add32(&mut p,*dwell_ms);}
         Command::Stop{after}=>p.push(*after),
         _=>{}
     }
@@ -448,8 +448,10 @@ mod tests {
         p[28+91]=2;assert!(decode(9,&q,&p).is_err());
         let m=encode(9,&req(Command::LogicalMove{position:"2000".into()})).unwrap();
         assert_eq!(m[1],19);assert_eq!(&m[22..],&2000i64.to_le_bytes());
-        let w=encode(9,&req(Command::LogicalWork{a:"2000".into(),b:"8000".into(),half_period_ms:500,cycles:1})).unwrap();
-        assert_eq!(w[1],20);assert_eq!(w.len(),46);
+        let w=encode(9,&req(Command::LogicalWork{a:"2000".into(),b:"8000".into(),dwell_ms:500,cycles:1})).unwrap();
+        assert_eq!(w[1],20);assert_eq!(w.len(),50);
+        assert_eq!(&w[38..42],&0u32.to_le_bytes());
+        assert_eq!(&w[46..50],&500u32.to_le_bytes());
     }
     #[test]
     #[ignore = "Read-only real controller discovery; set MOTO_STORAGE_RS485 and MOTO_STORAGE_CAN"]

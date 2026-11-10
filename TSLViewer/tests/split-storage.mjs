@@ -5,10 +5,11 @@ import ts from 'typescript';
 const js = ts.transpileModule(readFileSync(new URL('../src/lib/split-storage.ts', import.meta.url), 'utf8'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText;
-function module(invoke, hardware = true) {
+function module(invoke, hardware = true, open = async () => {}) {
   const exports = {};
   new Function('exports', 'require', js)(exports, name => {
-    if (name === './api') return { HAS_TAURI: hardware };
+    if (name === './api') return { invokeCommand: hardware ? invoke : () => Promise.reject(Error('Tauri unavailable')) };
+    if (name === './semantic-motion') return { semanticMotion: {ensureConfigurationSession: open} };
     if (name === '@tauri-apps/api/core') return { invoke };
     throw new Error(name);
   });
@@ -19,7 +20,25 @@ test('C-generated compact backup vector and every bit corruption', () => {
   const data = [...readFileSync(new URL('./fixtures/motor-backup-v1.bin', import.meta.url))];
   assert.deepEqual(codec.decodeBackup(data, 65535, 9), {handId:65535,motor:9,offset:43210,generation:0x12345678});
   for (let i=0;i<128;i++) {const bad=[...data];bad[i>>3]^=1<<(i&7);assert.throws(()=>codec.decodeBackup(bad,65535,9));}
-  assert.throws(()=>codec.decodeBackup(data,1,9));
+  // Hand identity binding was intentionally removed; CRC remains required.
+  assert.equal(codec.decodeBackup(data,1,9).handId,1);
+});
+test('passive reads retry only explicit BUSY, serialize across pages, and do not open a session', async () => {
+  const calls=[]; let first=true;
+  const service=module(async (_,{motor,request:q})=>{
+    calls.push([motor,q.operation,q.offset]);
+    if(first){first=false;return {phase:5,result:-7,flags:0};}
+    return {id:q.id,motor,operation:q.operation===6?1:q.operation,phase:4,result:0,generation:1,hand_id:1,flags:1,offset:q.offset,data:Array(q.offset?22:106).fill(motor)};
+  },true,()=>assert.fail('passive read opened motion session'));
+  const result=await Promise.all([service.storageJob(1,1),service.storageJob(9,1)]);
+  assert.deepEqual(calls,[[1,1,0],[1,1,0],[1,6,106],[9,1,0],[9,6,106]]);
+  assert.equal(result[0].data.length,128);assert.equal(result[1].data[0],9);
+});
+test('explicit write rejection is not replayed and uses configuration session', async () => {
+  let opened=0,calls=0;
+  const service=module(async()=>{calls++;return {phase:5,result:-7,flags:0};},true,async()=>{opened++;});
+  await assert.rejects(service.storageJob(9,10),/-7/);
+  assert.equal(opened,1);assert.equal(calls,1);
 });
 test('two chunks, one commit, immutable status polling and complete data', async () => {
   const calls=[];const data=Array.from({length:128},(_,i)=>i);

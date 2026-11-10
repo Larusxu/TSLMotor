@@ -2268,3 +2268,7 @@ select optgroup {
   .pi-merged-workspace .telemetry-scope-card { min-height:370px; }
   .pi-merged-workspace .telemetry-scope-card .scope.fill { min-height:300px; }
 }
+
+.archive-table th:last-child,.archive-table td:last-child {min-width:220px;max-width:240px;width:1%;text-align:right;}
+.archive-actions {justify-content:flex-end;flex-wrap:nowrap;}
+.archive-bulk-confirm {display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:12px;border:1px solid var(--line);border-radius:8px;margin-bottom:12px;}

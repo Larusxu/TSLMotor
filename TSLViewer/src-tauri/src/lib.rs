@@ -5,6 +5,7 @@
 //! (datagram framing, RTMI parsing) away from the JS event loop.
 
 mod gateway;
+mod firmware;
 mod cylinder;
 mod axis;
 mod homing;
@@ -85,18 +86,20 @@ fn cylinder_control(state: State<'_, AppState>, channel:u8, request:cylinder::Re
 
 #[tauri::command(async)]
 fn main_control(state: State<'_, AppState>, motor:u8, op:u8, data:Vec<u8>)->Result<Vec<u8>,String> {
-    if state.busy.load(Ordering::SeqCst) && ![4,5,6,10,13,14,16].contains(&op) {return Err("参数应用/运动期间拒绝并发写操作".into());}
-    if state.control.active.load(Ordering::SeqCst) && ![4,5,6,10,13,14,16].contains(&op) {
+    let readonly=[4,5,6,10,13,14,16].contains(&op) || (op==35 && data.len()==7 && [3,4].contains(&data[2]));
+    if state.busy.load(Ordering::SeqCst) && !readonly {return Err("参数应用/运动期间拒绝并发写操作".into());}
+    if state.control.active.load(Ordering::SeqCst) && !readonly {
         return Err("位置控制期间禁止其它写操作，请先断使能".into());
     }
-    if ![4,5,6,10,11,12,13,14,15,16].contains(&op) || motor>16 {return Err("Invalid controller operation".into());}
+    if ![4,5,6,10,11,12,13,14,15,16,35].contains(&op) || motor>16 {return Err("Invalid controller operation".into());}
     state.link.gateway_control(motor,op,&data).map_err(|e|e.to_string())
 }
 
 #[tauri::command(async)]
 fn motor_storage(state: State<'_, AppState>, motor:u8, request:split_storage::Request)->Result<split_storage::Response,String> {
-    if state.busy.load(Ordering::SeqCst)||state.control.active.load(Ordering::SeqCst) {
-        return Err("Stop the current task before storage operations".into());
+      let passive=[1,6,7,9].contains(&request.operation);
+      if !passive && (state.busy.load(Ordering::SeqCst)||state.control.active.load(Ordering::SeqCst)) {
+          return Err("当前配置任务尚未结束，请稍后保存；读取配置不受影响".into());
     }
     let payload=split_storage::encode(motor,&request)?;
     let reply=state.link.gateway_control(motor,33,&payload).map_err(|e|e.to_string())?;
@@ -718,6 +721,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(state)
+        .manage(firmware::Workbench::default())
         .setup(move |app| {
             link.attach(app.handle().clone());
             // Lease renewal is independent of UI statistics and never queues
@@ -737,6 +741,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            firmware::firmware_start,
+            firmware::firmware_status,
             main_control,
             cylinder_control,
             motor_semantic,

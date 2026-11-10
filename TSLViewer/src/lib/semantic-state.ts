@@ -20,6 +20,7 @@ export interface MotorState {
   /** Optional mainboard telemetry fields: absent on existing firmware -> UI displays —. */
   bus_voltage_mv?: number | null; id_raw?: number | null;
   target_logical_position?: string | null;
+  telemetry_sampled_at_ms?: number;
   protection_state?: number | null;
 }
 export interface SemanticReply {
@@ -36,6 +37,23 @@ export interface SemanticView {
   motor: number; bootId: string; receivedAt: number; taskId?: number;
   device: DeviceState | null; state: MotorState | null; error: string;
 }
+/** Display telemetry is a separate cached sample, not an atomic base-state read.
+ * Allow the normal sampling advance between pages; boot/task checks stay at callers. */
+export function mergeMotorTelemetry(state: MotorState, telemetry: NonNullable<SemanticReply["telemetry"]>): MotorState {
+  if (!state.feedback_fresh || !Number.isFinite(telemetry.sampled_at_ms) ||
+      Math.abs((state.sampled_at_ms - telemetry.sampled_at_ms) | 0) > 1000) return state;
+  return { ...state, telemetry_sampled_at_ms: telemetry.sampled_at_ms,
+    bus_voltage_mv: telemetry.bus_voltage_mv ?? null, id_raw: telemetry.id_raw ?? null,
+    target_logical_position: telemetry.target_logical_position ?? null,
+    protection_state: telemetry.protection_state ?? null };
+}
+export function retainMotorTelemetry(state: MotorState, previous: MotorState | null): MotorState {
+  if (previous?.telemetry_sampled_at_ms == null) return state;
+  return mergeMotorTelemetry(state, { sampled_at_ms: previous.telemetry_sampled_at_ms,
+    bus_voltage_mv: previous.bus_voltage_mv, id_raw: previous.id_raw,
+    target_logical_position: previous.target_logical_position, protection_state: previous.protection_state });
+}
+
 type Reader = (motor: number, id: number) => Promise<SemanticReply>;
 let encoderSequence = 0;
 /** Passive encoder cache query: opening the page must not claim a motor session. */
@@ -48,7 +66,7 @@ export async function readEncoderSnapshot(motor: number): Promise<SemanticReply>
     throw new Error(`编码器回读未确认：${reply.result_name}`);
   return reply;
 }
-async function readTelemetry(motor: number, id: number): Promise<SemanticReply> {
+export async function readTelemetry(motor: number, id: number): Promise<SemanticReply> {
   return invokeCommand<SemanticReply>("motor_semantic", { motor, request: {
     request_id: id, boot_id: "0", session_id: 0, task_id: 0,
     command: { kind: "telemetry_state" },
@@ -105,7 +123,7 @@ export class SemanticStateSource {
       if (!d.device || !m.motor || d.boot_id !== m.boot_id || d.session_id !== m.session_id)
         throw new Error("主控启动或会话已变化，等待重新读取");
       // Optional v2 read-only telemetry page; older firmware safely returns unsupported.
-      // Never publish it if boot/session/sample identity changed between queries.
+      // Never mix motors, boots or tasks; adjacent cache samples are valid for display.
       let state = m.motor;
       if (this.reader === read && this.sequence < 0xffffffff) {
         try {
@@ -114,14 +132,8 @@ export class SemanticStateSource {
           if (epoch !== this.epoch) return this.current;
           if (x.result === 0 && x.protocol_version === 2 && x.operation === 1 &&
               x.request_id === id && !x.replayed && x.boot_id === m.boot_id &&
-              x.session_id === m.session_id && x.telemetry &&
-              x.telemetry.sampled_at_ms === m.motor.sampled_at_ms) {
-            state = { ...m.motor,
-              bus_voltage_mv: x.telemetry.bus_voltage_mv ?? null,
-              id_raw: x.telemetry.id_raw ?? null,
-              target_logical_position: x.telemetry.target_logical_position ?? null,
-              protection_state: x.telemetry.protection_state ?? null,
-            };
+              x.session_id === m.session_id && x.task_id === m.task_id && x.telemetry) {
+            state = mergeMotorTelemetry(m.motor, x.telemetry);
           }
         } catch { /* Optional page unavailable: basic state remains usable. */ }
       }

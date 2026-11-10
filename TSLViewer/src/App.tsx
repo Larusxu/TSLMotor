@@ -22,8 +22,10 @@ import LoopTest from "./pages/LoopTest";
 import Sequence from "./pages/Sequence";
 import Logs from "./pages/Logs";
 import Storage from "./pages/Storage";
+import Firmware from "./pages/Firmware";
 
 type Page =
+  | "firmware"
   | "overview"
   | "cylinders"
   | "encoder"
@@ -63,6 +65,7 @@ const NAV: {
   {
     group: "生产",
     items: [
+      { id: "firmware", label: "固件与烧录", hint: "DFU", icon: <Icon.Save /> },
       { id: "sequence", label: "自动测试", hint: "QA", icon: <Icon.Sequence /> },
       { id: "logs", label: "运行日志", hint: "LOG", icon: <Icon.Logs /> },
     ],
@@ -70,6 +73,7 @@ const NAV: {
 ];
 
 const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
+  firmware: {title:"固件与烧录",desc:"编译主控固件，通过 RS485 执行 DFU 升级。",crumb:"FIRMWARE"},
   cylinders: { title: "电缸控制", desc: "五路独立电缸的行程、保护参数与实时状态。", crumb: "LINEAR ACTUATORS" },
   overview: {
     title: "运行概览",
@@ -274,10 +278,11 @@ function Shell() {
           <p className="page-desc">{TITLES[page].desc}</p>
         </div>
 
-        {page === "cylinders" ? <CylinderToolbar model={cylinders}/> : page !== "registers" ? <MotorToolbar /> : null}
+        {page === "cylinders" ? <CylinderToolbar model={cylinders}/> : page !== "registers" && page !== "firmware" ? <MotorToolbar /> : null}
 
         <main className="content" ref={contentRef}>
           <div className="page-enter" key={page}>
+            {page === "firmware" && <Firmware />}
             {page === "overview" && <Overview cylinders={cylinders}/>}
             {page === "cylinders" && <Cylinders model={cylinders}/>}
             {page === "encoder" && <Encoder />}

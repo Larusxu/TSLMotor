@@ -37,7 +37,13 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String> {
     let result=i32::from_le_bytes(p[6..10].try_into().unwrap());
     if id!=q.id || p[10]!=motor || p[11]<1 || p[11]>11 ||
        (q.operation!=6 && p[11]!=q.operation) {
-        return Err(format!("Storage rejected or stale response (result={result}); read device status before resubmitting"));
+        // Older firmware returns the previous job's identity on rejection.
+        // Report BUSY without exposing its data or treating it as our result.
+        if result == -7 && q.operation != 6 {
+            return Ok(Response{id:q.id,phase:5,result,motor,operation:q.operation,
+                generation:0,hand_id:0,flags:0,offset:0,data:vec![]});
+        }
+        return Err(format!("存储响应与当前请求不匹配（请求 {}，响应 {}，结果 {}）；请重新读取配置",q.id,id,result));
     }
     Ok(Response{id,phase:p[1],result,motor,operation:p[11],
         generation:u32::from_le_bytes(p[12..16].try_into().unwrap()),
@@ -46,6 +52,62 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String> {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test]
+    #[ignore="Passive page navigation regression on COM10; no motor motion"]
+    fn hardware_page_reads_without_owner(){
+        use std::{time::{Duration,Instant,SystemTime,UNIX_EPOCH},thread};
+        let port=std::env::var("MOTO_STORAGE_RS485").expect("test port required");
+        let serial=serialport::new(port,1500000).timeout(Duration::from_millis(10)).dtr_on_open(false).open().unwrap();
+        let mut t=crate::gateway::Transport::new(serial,"main485",9);
+        // Wait beyond the old five-second legacy lease, without OPEN/permit.
+        thread::sleep(Duration::from_millis(5200));
+        let seed=(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()%0xffffffff) as u32;
+        for (i,(motor,operation)) in [(0,7),(0,1),(9,1),(9,9),(0,7),(1,1),(0,1),(0,7)].into_iter().enumerate(){
+            let mut q=Request{id:seed+i as u32,operation,offset:0,data:vec![]};
+            let started=Instant::now();
+            let mut r=decode(motor,&q,&t.call(motor,33,&encode(motor,&q).unwrap()).unwrap()).unwrap();
+            while r.phase==2||r.phase==3{
+                assert!(started.elapsed()<Duration::from_secs(10));thread::sleep(Duration::from_millis(40));q.operation=6;
+                r=decode(motor,&q,&t.call(motor,33,&encode(motor,&q).unwrap()).unwrap()).unwrap();
+            }
+            assert!([0,-4].contains(&r.result),"op={operation} result={}",r.result);
+            if r.result==0 {q.operation=6;q.offset=106;let tail=decode(motor,&q,&t.call(motor,33,&encode(motor,&q).unwrap()).unwrap()).unwrap();assert_eq!(tail.data.len(),22);assert_eq!(tail.generation,r.generation);}
+            eprintln!("PASS passive motor={motor} op={operation} result={} elapsed_ms={}",r.result,started.elapsed().as_millis());
+        }
+        for (id,base,count) in [(1u16,528u16,14u16),(2,576,20),(3,640,60),(4,1024,60),(5,1252,60)]{
+            let mut q=vec![];q.extend(id.to_be_bytes());q.push(3);q.extend(base.to_be_bytes());q.extend(count.to_be_bytes());
+            let r=t.call(0,35,&q).unwrap();assert_eq!(&r[..3],&q[..3]);assert_eq!(r[3],0);assert_eq!(r.len(),4+2*count as usize);
+            eprintln!("PASS motion registers base={base} count={count}");
+        }
+        // Reuse the factory tool's semantic session for an unchanged bitmap
+        // write: exercises the real write route without enqueuing any motion.
+        use crate::semantic_control as sem;
+        let mut q=sem::Request{request_id:1,boot_id:"0".into(),session_id:0,task_id:0,command:sem::Command::GetState};
+        let r=sem::decode(0,&q,&t.call(0,32,&sem::encode(0,&q).unwrap()).unwrap()).unwrap();
+        let d=r.device.unwrap();assert_eq!(d.active_motor,0);assert!(!d.stopping);assert_eq!(r.session_id,0);
+        q.boot_id=r.boot_id;q.request_id=d.request_floor+1;q.session_id=0x43464701;q.command=sem::Command::Open;
+        let r=sem::decode(0,&q,&t.call(0,32,&sem::encode(0,&q).unwrap()).unwrap()).unwrap();assert_eq!(r.result,0);
+        let outcome=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||{
+            let read=t.call(0,35,&[0,20,3,2,81,0,1]).unwrap();assert_eq!(read[3],0);
+            let write=t.call(0,35,&[0,21,16,2,81,0,1,read[4],read[5]]).unwrap();assert_eq!(write,[0,21,16,0]);
+            let after=t.call(0,35,&[0,22,3,2,81,0,1]).unwrap();assert_eq!(&read[4..],&after[4..]);
+            let pending=t.call(0,35,&[0,23,3,2,29,0,1]).unwrap();assert_eq!(&pending[3..],&[0,0,0]);
+            eprintln!("PASS same-source semantic session register write, unchanged READY mask; no queued motion");
+        }));
+        q.request_id+=1;q.command=sem::Command::Close;
+        let r=sem::decode(0,&q,&t.call(0,32,&sem::encode(0,&q).unwrap()).unwrap()).unwrap();assert_eq!(r.result,0);
+        assert!(outcome.is_ok());
+    }
+    #[test] fn rejected_busy_is_not_stale_success(){
+        let mut q=Request{id:9,operation:1,offset:0,data:vec![]};
+        let mut p=vec![0;22];p[0]=1;p[1]=5;p[2]=8;p[10]=1;p[11]=7;
+        p[6..10].copy_from_slice(&(-7i32).to_le_bytes());
+        let r=decode(9,&q,&p).unwrap();
+        assert_eq!((r.id,r.motor,r.operation,r.phase,r.result),(9,9,1,5,-7));
+        assert!(r.data.is_empty());
+        q.operation=6;assert!(decode(9,&q,&p).is_err());
+        q.operation=1;p[6..10].fill(0);assert!(decode(9,&q,&p).is_err());
+    }
     #[test]
     #[ignore="Actual C gateway/storage with fake NOR; set LOS_MOTO_GATEWAY_RPC"]
     fn c_storage_roundtrip(){

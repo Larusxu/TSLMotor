@@ -1,5 +1,6 @@
 import { invokeCommand } from "./api";
-import type { SemanticReply } from "./semantic-state";
+import { readTelemetry, type SemanticReply } from "./semantic-state";
+import { acquisitionLane } from "./pi-auto/acquisition";
 
 export type MotorCommand = { kind: string; [key: string]: unknown };
 export class CommandRejected extends Error {
@@ -25,6 +26,7 @@ export class SemanticMotion {
   private motionEpoch = 0;
   private task = 0;
   private pulseAt = 0;
+  private telemetryAt = 0;
   private permitAt = 0;
   private jogAt = 0;
   private heldTask = 0;
@@ -40,6 +42,8 @@ export class SemanticMotion {
   private errors = new Set<(error: string) => void>();
   subscribeErrors(fn: (error: string) => void) { this.errors.add(fn); return () => { this.errors.delete(fn); }; }
   owned() { return this.session !== 0; }
+  /** Configuration shares the existing owner without selecting another motor. */
+  ensureConfigurationSession() { return this.open(this.motor || 1); }
   /** Controller status within the current motor session, without switching it. */
   deviceState() { return this.queue(()=>this.call(0,{kind:"get_state"})); }
   subscribe(fn: (r: SemanticReply, motor: number) => void) {
@@ -126,6 +130,19 @@ export class SemanticMotion {
           }
         }
         const state = await this.call(this.motor, { kind: "position_state" });
+        // Read the MCU cache after lease renewal. This does not access TMC UART
+        // and optional display failures must not revoke the motion permit.
+        if (!acquisitionLane.busy() && Date.now() - this.telemetryAt >= 500) {
+          this.telemetryAt = Date.now();
+          try {
+            const id = ++this.seq;
+            const telemetry = await readTelemetry(this.motor, id);
+            if (telemetry.result === 0 && telemetry.protocol_version === 2 && telemetry.operation === 1 &&
+                telemetry.request_id === id && !telemetry.replayed && telemetry.boot_id === state.boot_id &&
+                telemetry.session_id === state.session_id && telemetry.task_id === state.task_id && telemetry.telemetry)
+              this.observers.forEach(fn => fn(telemetry, this.motor));
+          } catch { /* A display read is independent of the command/lease result. */ }
+        }
         if (state.motor?.fault || !state.motor?.permit) this.permitWanted = this.heldJog = false;
         if (this.heldJog && (state.task_id !== this.heldTask ||
             (state.motor?.motion_owner !== 3 && !state.pending))) this.heldJog = false;
