@@ -3,7 +3,7 @@ const h=await hardware('D:/WorkeSpace/work/comp_proj/TeslaHand/build/rebuild/'+p
 try{
  let s=(await h.command(9,{kind:'position_state'})).motor;
  if(!s.config_verified){await h.command(9,{kind:'commission',action:1});await h.wait(9,15000,r=>r.motor.config_verified);}
- await h.command(9,{kind:'permit',enabled:true,lease_ms:3000});
+
  if(!s.coordinate_valid||process.env.PI_REHOME==='1'){console.log('HOME',await h.command(9,{kind:'homing_config_read'}));await h.command(9,{kind:'homing_start',direction:1,step_unit:100,dual:true});s=(await h.wait(9,180000,r=>r.motor.coordinate_valid&&!r.motor.motion_active)).motor;}
  s=(await h.command(9,{kind:'position_state'})).motor;console.log('HOMED',s);
  await h.wait(9,5000,r=>r.motor.feedback_fresh);

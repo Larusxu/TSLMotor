@@ -37,5 +37,5 @@ try {
  fs.writeFileSync(report+'-result.json',JSON.stringify(result,null,2));
  console.log('ALIGNMENT_PASS',JSON.stringify(result.motor),'HOMING_CONFIG_UNCHANGED');
 } catch(e){console.error('ALIGNMENT_FAILED',e.message);process.exitCode=1;}
-finally {try{if(motion?.owned()){await motion.permit(11,false);await motion.close();}}finally{await h.close();}}
+finally {try{if(motion?.owned()){await motion.command(11,{kind:"drive_disable"});await motion.close();}}finally{await h.close();}}
 

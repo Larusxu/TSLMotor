@@ -6,7 +6,8 @@ import { pwmHz } from "./lib/units";
 import { Badge, Button, Icon, SelectField, Toasts } from "./components/ui";
 import { SettingsDialog } from "./components/Settings";
 
-import Cylinders, { CylinderToolbar } from "./pages/Cylinders";
+import Cylinders from "./pages/Cylinders";
+import Actions from "./pages/Actions";
 import { useCylinders } from "./lib/cylinder";
 import MotorToolbar from "./components/MotorToolbar";
 import HandIdentity from "./components/HandIdentity";
@@ -25,6 +26,7 @@ import Storage from "./pages/Storage";
 import Firmware from "./pages/Firmware";
 
 type Page =
+  | "actions"
   | "firmware"
   | "overview"
   | "cylinders"
@@ -63,6 +65,10 @@ const NAV: {
     ],
   },
   {
+    group: "动作",
+    items: [{id:"actions",label:"绝对位置",hint:"",icon:<Icon.Target/>}],
+  },
+  {
     group: "生产",
     items: [
       { id: "firmware", label: "固件与烧录", hint: "DFU", icon: <Icon.Save /> },
@@ -73,6 +79,7 @@ const NAV: {
 ];
 
 const TITLES: Record<Page, { title: string; desc: string; crumb: string }> = {
+  actions: {title:"绝对位置",desc:"独立控制16路电机与5路电缸的位置与行程范围。",crumb:"MOTION"},
   firmware: {title:"固件与烧录",desc:"编译主控固件，通过 RS485 执行 DFU 升级。",crumb:"FIRMWARE"},
   cylinders: { title: "电缸控制", desc: "五路独立电缸的行程、保护参数与实时状态。", crumb: "LINEAR ACTUATORS" },
   overview: {
@@ -122,11 +129,13 @@ function Shell() {
   const [page, setPage] = useState<Page>("overview");
   // Match main: preserve the mounted PI/PRBS session when navigating away.
   const [tuningVisited, setTuningVisited] = useState(false);
+  const [actionsVisited, setActionsVisited] = useState(false);
+  useEffect(() => { if (page === "actions") setActionsVisited(true); }, [page]);
   useEffect(() => { if (page === "tuning") setTuningVisited(true); }, [page]);
   // Portal target belongs to this exact mounted PI card; never query a stale DOM id.
   const [endpointHost, setEndpointHost] = useState<HTMLDivElement | null>(null);
   const app = useApp();
-  const cylinders = useCylinders(app.connected, page === "cylinders" || page === "overview" || page === "registers", app.acquiring || app.streaming, app.toast);
+  const cylinders = useCylinders(app.connected, page === "cylinders" || page === "overview" || page === "registers" || page === "actions", app.acquiring || app.streaming, app.toast, (page === "cylinders" || page === "actions") && app.mode !== "direct");
   const [fps, setFps] = useState(0);
   const contentRef = useRef<HTMLElement | null>(null);
 
@@ -183,7 +192,6 @@ function Shell() {
               >
                 {it.icon}
                 <span>{it.label}</span>
-                <small>{it.hint}</small>
               </button>
             ))}
           </div>
@@ -278,7 +286,7 @@ function Shell() {
           <p className="page-desc">{TITLES[page].desc}</p>
         </div>
 
-        {page === "cylinders" ? <CylinderToolbar model={cylinders}/> : page !== "registers" && page !== "firmware" ? <MotorToolbar /> : null}
+        {page !== "cylinders" && page !== "registers" && page !== "firmware" && page !== "actions" ? <MotorToolbar /> : null}
 
         <main className="content" ref={contentRef}>
           <div className="page-enter" key={page}>
@@ -293,6 +301,11 @@ function Shell() {
             {page === "sequence" && <Sequence />}
             {page === "logs" && <Logs />}
           </div>
+          {(actionsVisited || page === "actions") && (
+            <section hidden={page !== "actions"} aria-hidden={page !== "actions"}>
+              <Actions cylinders={cylinders} active={page === "actions"}/>
+            </section>
+          )}
           {/* Keep the unified PI session outside the keyed route (as main does for
               PRBS). Page navigation hides it without unmounting: current jobs,
               candidates, history and unsaved PI drafts remain intact. */}

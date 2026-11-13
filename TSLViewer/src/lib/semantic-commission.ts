@@ -4,7 +4,7 @@ import type { SemanticReply } from "./semantic-state";
 export type AlignmentPlan = {
   scanDegrees: number; stepDegrees: number; settleMs: number; currentMa: number;
 };
-/** One MCU commissioning owner. The PC renews permission but never emits a
+/** One MCU commissioning owner. The PC observes progress but never emits a
  * position trajectory or marks configuration/calibration successful itself. */
 class CommissionService {
   private running = false;
@@ -14,7 +14,6 @@ class CommissionService {
     if (this.running) throw Error("主控标定任务进行中");
     this.running = true; this.cancelled = false;
     try {
-      await semanticMotion.permit(motor, true);
       update(await semanticMotion.command(motor, { kind: "alignment", scan_degrees: plan.scanDegrees,
         step_degrees: plan.stepDegrees, settle_ms: plan.settleMs, current_ma: plan.currentMa }));
       const deadline = Date.now() + 150000;
@@ -30,7 +29,7 @@ class CommissionService {
     } catch(e) {
       this.cancelled = true; throw e;
     } finally {
-      try { if (this.cancelled) await semanticMotion.close(); }
+      try { if (this.cancelled) await semanticMotion.stop(motor,true); }
       finally { this.running = false; }
     }
   }

@@ -51,7 +51,7 @@ pub struct HomingState {    /// 0 空闲 / 1 进行中 / 2 成功 / 3 失败
     pub iq_ma: f64,
     /// 本次找零已用时，ms
     pub elapsed_ms: u32,
-    /// 0 无 / 1 超时 / 2 控制器故障 / 3 取消 / 4 断使能 / 5 编码器无效 / 6 未授权
+    /// 0 无 / 1 超时 / 2 控制器故障 / 3 取消 / 4 断使能 / 5 编码器无效 / 6 保留
     pub error: u8,
     /// 主控给的说明
     pub message: String,
@@ -62,6 +62,18 @@ pub struct HomingState {    /// 0 空闲 / 1 进行中 / 2 成功 / 3 失败
     pub negative_contact: i32,
     pub positive_contact: i32,
     pub travel_counts: i32,
+    pub complex: bool,
+    pub pair_phase: u8,
+    pub pair_repeats: u8,
+    pub candidate_position: i32,
+    pub adaptive: bool,
+    pub adaptive_phase: u8,
+    pub load_phase: u8,
+    pub sample_position: i32,
+    pub sample_velocity: i32,
+    pub sample_target: i32,
+    pub edge_score: f64,
+    pub park_position: i32,
 }
 
 impl HomingState {
@@ -72,9 +84,11 @@ impl HomingState {
             3 => "已取消",
             4 => "已断开使能",
             5 => "编码器无效，请先做电角度标定",
-            6 => "未授予运动授权",
+            6 => "保留错误码 6",
             8 => "双端行程无效：未离开首端、行程过短或位置溢出",
             7 => "闭环参数无效：请配置电流环、速度环、位置环及反馈来源/位置限位",
+            9 if self.complex => "联动找零未完成：退让卸载未完成，或另一轴已停止",
+            9 => "负端未确认：已停止推进；负载转折候选不等同于机械端点，未建立有效行程",
             _ => "",
         }
     }
@@ -131,6 +145,18 @@ pub fn decode_state(raw: &[u8]) -> Option<HomingState> {
         s.travel_counts = word(20);
         s.zero_valid &= s.negative_valid && s.positive_valid && s.travel_counts > 0;
     }
+    if raw.len()>24 && raw[24]==1 {
+        if raw.len()<48 {return None;}
+        let word=|i|i32::from_le_bytes(raw[i..i+4].try_into().unwrap());
+        s.adaptive=true;s.adaptive_phase=raw[25];s.load_phase=raw[26];
+        s.sample_position=word(28);s.sample_velocity=word(32);s.sample_target=word(36);
+        s.edge_score=word(40) as f64/100.0;s.park_position=word(44);
+    }
+    if raw.len()>24 && raw[24]==2 {
+        if raw.len()<32 {return None;}
+        s.complex=raw[27]!=0;s.pair_phase=raw[25];s.pair_repeats=raw[26];
+        s.candidate_position=i32::from_le_bytes(raw[28..32].try_into().unwrap());
+    }
     // 固件可以只在状态字里给码值；这里补一句人能读的说明，界面直接显示。
     s.message = if s.error != 0 {
         s.error_text().to_string()
@@ -143,8 +169,10 @@ pub fn decode_state(raw: &[u8]) -> Option<HomingState> {
     };
     if s.dual_supported && s.error == 0 {
         s.message = match (s.stage, s.limit_phase, s.zero_valid) {
+            (1, 1, _) if s.positive_valid => "正端有效，负端检测／退开确认中",
             (1, 1, _) => "负端检测／退开确认中",
-            (1, 2, _) => "负端有效，正端检测／退开确认中",
+            (1, 2, _) if s.negative_valid => "负端有效，正端检测／退开确认中",
+            (1, 2, _) => "正端检测／退开确认中",
             (2, _, true) => "双端找零完成",
             (2, _, false) => "单端已记录，双端行程尚未有效",
             _ => "等待找零",
@@ -208,7 +236,7 @@ impl HomingConfig {
             ("额定电流（mA）", self.rated_ma, 100, 3000),
             ("连续确认（ms）", self.confirm_ms, 10, 1000),
             ("找零电流上限（mA）", self.limit_ma, 100, 2000),
-            ("推进速度上限（RPM）", self.max_rpm, 100, 6000),
+            ("推进速度上限（RPM）", self.max_rpm, 100, 28730),
             ("退开量（°）", self.retreat_deg, 0, 1080),
             ("退开稳定等待（ms）", self.settle_ms, 0, 10000),
             ("找零超时（s）", self.timeout_s, 5, 300),
@@ -384,6 +412,19 @@ mod tests {
     }
 
     #[test]
+    fn config_accepts_8000_rpm_and_runtime_speed_ceiling() {
+        let mut c = HomingConfig::default();
+        c.k_x1000 = 600;
+        c.rated_ma = 1050;
+        c.limit_ma = 800;
+        for rpm in [8000, 28730] {
+            c.max_rpm = rpm;
+            let raw = c.encode().unwrap();
+            assert_eq!(HomingConfig::decode(&raw).unwrap(), c);
+        }
+    }
+
+    #[test]
     fn config_rejects_limit_below_threshold() {
         let mut c = HomingConfig::default();
         c.limit_ma = 320; // == 阈值，判据永远无法满足
@@ -414,7 +455,7 @@ mod tests {
             (
                 {
                     let mut c = HomingConfig::default();
-                    c.max_rpm = 6001;
+                    c.max_rpm = 28731;
                     c
                 },
                 "rpm too large",
@@ -438,5 +479,17 @@ mod tests {
         assert!(HomingConfig::decode(&[]).is_none());
         assert!(HomingConfig::decode(&[0u8; 15]).is_none());
         assert!(HomingConfig::decode(&[0u8; 16]).is_some());
+    }
+    #[test]
+    fn adaptive_result_and_uncertainty_are_not_legacy_completion() {
+        let mut b=[0u8;48];b[0]=3;b[2]=9;b[9]=2;b[24]=1;b[25]=4;b[26]=2;
+        b[28..32].copy_from_slice(&12345i32.to_le_bytes());
+        b[40..44].copy_from_slice(&425i32.to_le_bytes());
+        let s=decode_state(&b).unwrap();
+        assert!(s.adaptive);assert!(!s.zero_valid);assert_eq!(s.adaptive_phase,4);
+        assert_eq!(s.sample_position,12345);assert_eq!(s.edge_score,4.25);
+        assert!(s.message.contains("负端未确认"));
+        assert!(decode_state(&b[..47]).is_none());
+        assert!(!decode_state(&b[..24]).unwrap().adaptive);
     }
 }

@@ -8,7 +8,7 @@ async function tune(words){await h.wait(9,3000,r=>r.motor.drive===0&&r.motor.fee
 try{
  const state=(await h.command(9,{kind:'position_state'})).motor;
  if(!state.coordinate_valid||!state.align_valid||state.motion_active)throw Error('Homed idle M9 required');
- await h.command(9,{kind:'permit',enabled:true,lease_ms:3000});
+
  original=await h.registers([0x140,0x142,0x143,0x145,0x146]);profile=await h.profile();
  const bytes=Buffer.from(profile),span=Number(state.logical_span);savedMode=state.mode;savedSpeed=bytes.readUInt32LE(112);
  if(seed){changed=true;await tune(seed);}

@@ -74,14 +74,6 @@ export interface TeslaProfile {
   pwmMaxCount: number;
   maPerCount: number;
   countsPerRpm: number;
-  pid: {
-    curP: number;
-    curI: number;
-    velP: number;
-    velI: number;
-    posP: number;
-    posI: number;
-  };
   limits: {
     torqueMa: number;
     fluxMa: number;
@@ -100,7 +92,6 @@ export const TESLA_PROFILE: TeslaProfile = {
   pwmMaxCount: 4800,
   maPerCount: 0.20131,
   countsPerRpm: 305.4,
-  pid: { curP: 64, curI: 48, velP: 500, velI: 250, posP: 500, posI: 0 },
   limits: { torqueMa: 800, fluxMa: 0, velRpm: 25_000, uqUd: 0x5a81 },
   bench: { rOhm: 2.01, lUh: 111.8, bandwidthHz: 2000, p: 359, i: 129 },
 };

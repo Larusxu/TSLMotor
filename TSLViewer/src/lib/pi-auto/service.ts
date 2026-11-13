@@ -1,5 +1,5 @@
 import { semanticMotion } from "../semantic-motion";
-import { readMotorProfile, pidFromProfile, tuneMotorPi, applyMotorPi, COUNTS_PER_RPM, word, RUN2_TAG } from "../motor-profile-ui";
+import { readMotorProfile, pidFromProfile, tuneMotorPi, applyMotorPi, COUNTS_PER_RPM, word } from "../motor-profile-ui";
 import { decodeCapture, decodeCapturePage, decodeCaptureDiagnostic, trialCoefficients, type Capture, type Loop, type Candidate } from "./model";
 import type { PidCfgPayload } from "../types";
 import { parsePidConfig } from '../units';
@@ -39,7 +39,7 @@ export class PiAutoService {
       if(!automatic)release=await acquisitionLane.enter();
       if(!Number.isInteger(o.amplitude)||o.amplitude<1||o.amplitude>0x7fffffff||!Number.isInteger(o.travelCounts)||o.travelCounts<1||o.travelCounts>0x7fffffff||!Number.isInteger(o.durationMs)||o.durationMs<1000||o.durationMs>7000)throw Error('幅值、时长或位移范围无效');
       const state=await semanticMotion.command(motor,{kind:"position_state"});
-      if(!state.motor?.permit)throw Error("请先开启运动授权");
+      if(!state.motor)throw Error("未读取到电机状态");
       if(state.motor.motion_active)throw Error("请先停止当前任务");
       if(state.motor.drive!==0){await semanticMotion.command(motor,{kind:"stop",after:2});await semanticMotion.wait(motor,10000,r=>r.motor?.drive===0);}
       const prior=decodeCapture((await semanticMotion.command(motor,{kind:"ident_state",cursor:0})).identification??[]);
@@ -238,11 +238,11 @@ export class PiAutoService {
     try{
       release=await acquisitionLane.enter();
       const state=await semanticMotion.command(motor,{kind:'position_state'});
-      if(!state.motor?.permit)throw Error('请先开启运动授权');
+      if(!state.motor)throw Error("未读取到电机状态");
       if(!state.motor.coordinate_valid)throw Error('请先完成双端找零；末段优化会在40%～60%行程运行');
       if(state.motor.motion_active)throw Error('请先停止当前运动');
       const profile=(await readMotorProfile(motor)).data,stored=pidFromProfile(profile);
-      const ceilingRaw=word(profile,68)===RUN2_TAG?word(profile,60):0;
+      const ceilingRaw=word(profile,60);
       if(!ceilingRaw)throw Error('当前电机档案缺少长期转速上限，请先应用长期约束配置');
       const ceiling=ceilingRaw/COUNTS_PER_RPM;
       if(speeds.some(rpm=>Math.floor(rpm*COUNTS_PER_RPM)>ceilingRaw))

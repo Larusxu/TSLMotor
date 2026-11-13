@@ -48,8 +48,8 @@ export function SemanticControls({ children }: { children: ReactNode }) {
     latest.current=null; // discard a queued slider target when the MCU ends the task
   };
   const dragging = useRef(false), latest = useRef<number | null>(null), sending = useRef(false);
-  const can = app.connected && !busy && !!s?.permit && (s.drive === 0 || s.drive === 2) && s.config_verified && !s.fault && s.feedback_fresh;
-  const interrupted = !app.connected || (!!s && (!!s.fault || !s.permit));
+  const can = app.connected && !busy && !!s && (s.drive === 0 || s.drive === 2) && s.config_verified && !s.fault && s.feedback_fresh;
+  const interrupted = !app.connected || (!!s && (!!s.fault));
   const range = s?.coordinate_valid && s.logical_span && s.margin_counts != null
     ? [BigInt(s.margin_counts), BigInt(s.logical_span) - BigInt(s.margin_counts)] : null;
   // MCU owns the boot-local mechanism frame and its actual safety margin.

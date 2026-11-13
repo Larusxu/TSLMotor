@@ -17,7 +17,7 @@ try{
  }
  await cmd(0,{kind:'close'});session=0;
  const end=Date.now()+120000;let lastPrint=0,count=0,low=Infinity,high=0;
- while(Date.now()<end){const s=(await cmd(9,{kind:'get_state'})).motor;assert.equal(s.fault,0,JSON.stringify(s));assert.equal(s.last_error,0);assert(s.logic_power&&s.config_verified&&s.limits_valid);assert.equal(s.drive,0);assert(!s.motion_active&&!s.permit);low=Math.min(low,s.sampled_at_ms);high=Math.max(high,s.sampled_at_ms);count++;if(Date.now()-lastPrint>25000){console.log('IDLE',JSON.stringify({count,ageMs:s.sampled_at_ms,fresh:s.feedback_fresh,temperature:s.temperature_raw,fault:s.fault,power:s.logic_power}));lastPrint=Date.now();}await new Promise(r=>setTimeout(r,100));}
- assert(high-low>110000);console.log('PASS 120 seconds idle after 8 RTMI start/stop cycles; continuous feedback, PWM OFF, no permit/fault/power loss');
+ while(Date.now()<end){const s=(await cmd(9,{kind:'get_state'})).motor;assert.equal(s.fault,0,JSON.stringify(s));assert.equal(s.last_error,0);assert(s.logic_power&&s.config_verified&&s.limits_valid);assert.equal(s.drive,0);assert(!s.motion_active);low=Math.min(low,s.sampled_at_ms);high=Math.max(high,s.sampled_at_ms);count++;if(Date.now()-lastPrint>25000){console.log('IDLE',JSON.stringify({count,ageMs:s.sampled_at_ms,fresh:s.feedback_fresh,temperature:s.temperature_raw,fault:s.fault,power:s.logic_power}));lastPrint=Date.now();}await new Promise(r=>setTimeout(r,100));}
+ assert(high-low>110000);console.log('PASS 120 seconds idle after 8 RTMI start/stop cycles; continuous feedback, PWM OFF, no fault/power loss');
  console.log('FINAL',JSON.stringify((await cmd(9,{kind:'get_state'})).motor));
 }finally{if(session){try{await cmd(0,{kind:'close'});}catch(e){console.error(e);}}await h.close();}

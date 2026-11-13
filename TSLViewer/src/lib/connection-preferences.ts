@@ -1,4 +1,4 @@
-/** UI preference only: never opens a port, grants a permit or restores drive state. */
+/** UI preference only: never opens a port or restores drive state. */
 export type ConnectionMode = "direct" | "main485" | "maincan";
 const KEY = "tsl.workspace.connection-mode";
 export function connectionMode(value: string | null): ConnectionMode {

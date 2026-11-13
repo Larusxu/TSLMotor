@@ -18,16 +18,18 @@ pub struct Request {
 pub enum Command {
     IdentState { cursor:u32 }, IdentStart { loop_id:u8, amplitude:u32, duration_ms:u32, travel_counts:u32, #[serde(default)] sampling:Option<u8>, #[serde(default)] excitation_sampling:Option<u8> }, IdentAbort,
     GetState, PositionState, TelemetryState, EncoderState, RtmiState { cursor:u32 }, RtmiConfig { enabled:bool, sampling:u8, addresses:[u16;7], #[serde(default="rtmi_decimation_default")] decimation:u8 }, Open, Pulse, Close,
-    Permit { enabled: bool, lease_ms: u32 },
     DriveDisable, DriveEnable,
     Commission { action: u8 },
     EncoderConfig { config: [u32;11] },
+    EncoderTemporary { config: [u32;11] },
     Alignment { scan_degrees:u16, step_degrees:u16, settle_ms:u16, current_ma:u16 },
     HomingConfigRead,
     HomingConfigWrite { config:[u16;8] },
     PiTune { group:u8, expected_config:u32, coefficients:[u32;4] },
     ApplyConfiguration { payload:Vec<u8> },
     HomingStart { direction:u8, step_unit:u16, dual:bool },
+    HomingLinked { direction:u8, step_unit:u16, dual:bool, motor_mask:u16, #[serde(default)] complex:bool },
+    HomingAdaptive { #[serde(default)] velocity_rpm:Option<u16>, #[serde(default)] return_positive:Option<bool> },
     Homing { direction:u8, step_unit:u16, dual:bool, config:[u16;8], #[serde(default)] debug_pi:bool },
     Limits { task_iq_raw: u32, task_velocity_raw: u32, acceleration_raw: u32,
         deceleration_raw: u32, trip_iq_raw: u32, over_ms: u32, sample_ms: u32,
@@ -50,17 +52,17 @@ impl Command {
         match self {
             Self::IdentState{..}|Self::GetState|Self::PositionState|Self::TelemetryState|Self::EncoderState|Self::RtmiState{..}=>1,
             Self::IdentStart{..}=>28, Self::IdentAbort=>29, Self::Open=>2, Self::Pulse=>3, Self::Close=>4,
-            Self::Permit{..}=>5, Self::DriveDisable=>6, Self::DriveEnable=>7,
+            Self::DriveDisable=>6, Self::DriveEnable=>7,
             Self::Limits{..}=>8, Self::Mode{..}=>9, Self::JogStart{..}=>10,
             Self::TaskSpeed{..}=>26,
             Self::VelocityStart{..}=>27,
             Self::OpenLoopStart{..}=>30,
             Self::JogRenew=>11, Self::Move{..}=>12, Self::Work{..}=>13,
             Self::Stop{..}=>14, Self::EStop=>15, Self::ClearFault=>16, Self::Status=>17,
-            Self::Commission{..}|Self::EncoderConfig{..}=>18,
+            Self::Commission{..}|Self::EncoderConfig{..}|Self::EncoderTemporary{..}=>18,
             Self::LogicalMove{..}=>19, Self::LogicalWork{..}=>20,
             Self::Alignment{..}=>18,
-            Self::Homing{..}|Self::HomingStart{..}=>18,
+            Self::Homing{..}|Self::HomingStart{..}|Self::HomingLinked{..}|Self::HomingAdaptive{..}=>18,
             Self::HomingConfigRead=>21, Self::HomingConfigWrite{..}=>22,
             Self::RtmiConfig{..}=>25, Self::PiTune{..}=>23, Self::ApplyConfiguration{..}=>24,
         }
@@ -86,7 +88,6 @@ pub fn encode(motor:u8,q:&Request)->Result<Vec<u8>,String>{
         Command::EncoderState=>{if motor==0{return Err("编码器状态需要电机编号".into());}p.push(2);},
         Command::RtmiState{cursor}=>{if motor==0{return Err("RTMI requires a motor".into());}p.push(3);add32(&mut p,*cursor);},
         Command::RtmiConfig{enabled,sampling,addresses,decimation}=>{if !(1..=16).contains(decimation){return Err("RTMI decimation invalid".into());}p.push(*enabled as u8);p.push(*sampling);for addr in addresses{if *addr>0x3ff&&*addr!=65535{return Err("RTMI address invalid".into());}p.extend(addr.to_le_bytes());}p.push(*decimation);},
-        Command::Permit{enabled,lease_ms}=>{p.push(*enabled as u8);add32(&mut p,*lease_ms);}
         Command::Limits{task_iq_raw,task_velocity_raw,acceleration_raw,deceleration_raw,trip_iq_raw,over_ms,sample_ms,feedback_timeout_ms,stop_timeout_ms,margin_counts,fault_action}=>{
             for v in [task_iq_raw,task_velocity_raw,acceleration_raw,deceleration_raw,trip_iq_raw,over_ms,sample_ms,feedback_timeout_ms,stop_timeout_ms,margin_counts]{add32(&mut p,*v);}
             p.push(*fault_action);
@@ -101,11 +102,12 @@ pub fn encode(motor:u8,q:&Request)->Result<Vec<u8>,String>{
             p.push(*group);add32(&mut p,*expected_config);for v in coefficients{add32(&mut p,*v);}
         }
         Command::ApplyConfiguration{payload}=>{
-            if payload.len()!=88&&payload.len()!=92&&!((payload.len()==93||payload.len()==105)&&payload[92]==1){return Err("配置负载长度错误".into());}p.extend(payload);
+            if payload.len()!=88&&payload.len()!=92&&!((payload.len()==93||payload.len()==105)&&(1..=6).contains(&payload[92])){return Err("配置负载长度错误".into());}p.extend(payload);
         }
-        Command::EncoderConfig{config}=>{
+        Command::EncoderConfig{config}|Command::EncoderTemporary{config}=>{
             if motor==0{return Err("编码器配置需要电机编号".into());}
             p.push(11);for v in config{add32(&mut p,*v);}
+            if matches!(&q.command,Command::EncoderTemporary{..}){p.push(1);}
         }
         Command::Commission{action}=>{
             if !(1..=5).contains(action){return Err("初始化/校准操作无效".into());}
@@ -122,9 +124,23 @@ pub fn encode(motor:u8,q:&Request)->Result<Vec<u8>,String>{
         Command::JogStart{velocity_raw,lease_ms}|Command::VelocityStart{velocity_raw,lease_ms}|Command::OpenLoopStart{velocity_raw,lease_ms}=>{p.extend(velocity_raw.to_le_bytes());add32(&mut p,*lease_ms);}
         Command::HomingConfigWrite{config}=>{ for v in config {p.extend(v.to_le_bytes());} }
         Command::HomingStart{direction,step_unit,dual}=>{
-            if *direction>1||!(100..=6000).contains(step_unit){return Err("找零方向或步长无效".into());}
-            p.extend([3,*direction]);p.extend(step_unit.to_le_bytes());p.push(if *dual{2}else{0});
+            if (*direction>2||(*direction==2&&!*dual))||!(100..=6000).contains(step_unit){return Err("找零方向或步长无效".into());}
+            p.extend([3,if *direction==2 {0}else{*direction}]);p.extend(step_unit.to_le_bytes());p.push((if *dual{2}else{0}) | if *direction==2{32}else{0});
         }
+        Command::HomingLinked{direction,step_unit,dual,motor_mask,complex}=>{
+            if (*direction>2||(*direction==2&&!*dual))||!(100..=6000).contains(step_unit)||motor==0||motor>16||motor_mask&(1u16<<(motor-1))==0 || (*complex && motor_mask.count_ones()!=2) {
+                return Err("联动找零方向、步长或电机组无效".into());
+            }
+            p.extend([3,if *direction==2 {0}else{*direction}]);p.extend(step_unit.to_le_bytes());p.push((if *dual{10}else{8}) | (if *complex{16}else{0}) | if *direction==2{32}else{0});
+            p.extend(motor_mask.to_le_bytes());
+        }
+        Command::HomingAdaptive{velocity_rpm,return_positive}=>{
+            p.extend([3,0,100,0,if *return_positive==Some(false){134}else{6}]);
+            if let Some(rpm)=velocity_rpm {
+                if *rpm==0 || *rpm>60000 {return Err("Search speed must be 1-60000 rpm".into());}
+                p.extend(rpm.to_le_bytes());
+            }
+        },
         Command::Homing{..}=>return Err("请先写入并回读主控找零参数，再单独开始找零".into()),
         Command::Move{position}|Command::LogicalMove{position}=>p.extend(count(position)?.to_le_bytes()),
         Command::Work{a,b,dwell_ms,cycles}|Command::LogicalWork{a,b,dwell_ms,cycles}=>{p.extend(count(a)?.to_le_bytes());p.extend(count(b)?.to_le_bytes());add32(&mut p,0);add32(&mut p,*cycles);add32(&mut p,*dwell_ms);}
@@ -142,7 +158,7 @@ pub struct DeviceSnapshot {pub capabilities:u32,pub motors:u8,pub source:u8,pub 
 pub struct MotorSnapshot {
     pub sampled_at_ms:u32,pub fault:u32,pub last_error:u32,
     pub position:String,pub negative_contact:String,pub positive_contact:String,
-    pub velocity_raw:i32,pub iq_raw:i32,pub connection:bool,pub permit:bool,
+    pub velocity_raw:i32,pub iq_raw:i32,pub connection:bool,
     pub drive:u8,pub align_valid:bool,pub home_neg_valid:bool,pub home_pos_valid:bool,
     pub span_valid:bool,pub motion_owner:u8,pub feedback_fresh:bool,pub config_verified:bool,
     pub logic_power:bool,pub motion_active:bool,pub effective_iq_raw:u32,pub effective_velocity_raw:u32,
@@ -182,7 +198,7 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String>{
     let encoder_query=matches!(q.command,Command::EncoderState);
     if motor>16 || (if telemetry_query {motor==0||p.len()!=60}else if ident_query {motor==0||p.len()<(if dense_request{44}else{92})||p.len()>124||(p.len()-44)%16!=0}else if rtmi_query {motor==0||p.len()<48||p.len()>120||(p.len()-48)%9!=0}else if encoder_query {motor==0||(p.len()!=76&&p.len()!=92)}else if home_config {motor==0||p.len()!=44}else if motor==0 {p.len()!=40}else{p.len()!=96 && p.len()!=120 && p.len()!=128}) {return Err("语义状态长度错误".into());}
     if p[0]!=2||p[1]!=q.command.code()||u32_at(p,2)!=q.request_id||p[23]&!3!=0 {return Err("语义响应身份/标志不匹配".into());}
-    let names=["OK","BUSY","NOT_AUTHORIZED","DRIVE_NOT_READY","ALIGN_INVALID","HOME_INVALID","OUT_OF_RANGE","STALE_SESSION","TIMEOUT","FAULT_LATCHED","CONFIG_MISMATCH","EEPROM_INVALID","UNSUPPORTED","IO_ERROR","BAD_REQUEST","TRAVEL_LIMIT"];
+    let names=["OK","BUSY","RESERVED_2","DRIVE_NOT_READY","ALIGN_INVALID","HOME_INVALID","OUT_OF_RANGE","STALE_SESSION","TIMEOUT","FAULT_LATCHED","CONFIG_MISMATCH","EEPROM_INVALID","UNSUPPORTED","IO_ERROR","BAD_REQUEST","TRAVEL_LIMIT"];
     let result=p[22];let result_name=*names.get(result as usize).ok_or("未知主控结果码")?;
     let boot=u64_at(p,6);
     if result==0 && q.boot_id!="0" && q.boot_id.parse::<u64>().ok()!=Some(boot){return Err("响应 boot_id 发生变化，请重新读取状态".into());}
@@ -200,7 +216,7 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String>{
     let snapshot=if motor!=0 && !home_config && !encoder_query && !rtmi_query && !ident_query && !telemetry_query {Some(MotorSnapshot{
         sampled_at_ms:u32_at(b,0),fault:u32_at(b,4),last_error:u32_at(b,8),
         position:i64_at(b,12).to_string(),negative_contact:i64_at(b,20).to_string(),positive_contact:i64_at(b,28).to_string(),
-        velocity_raw:u32_at(b,36) as i32,iq_raw:u32_at(b,40) as i32,connection:b[44]!=0,permit:b[45]!=0,
+        velocity_raw:u32_at(b,36) as i32,iq_raw:u32_at(b,40) as i32,connection:b[44]!=0,
         drive:b[46],align_valid:b[47]!=0,home_neg_valid:b[48]!=0,home_pos_valid:b[49]!=0,span_valid:b[50]!=0,
         motion_owner:b[51],feedback_fresh:b[52]!=0,config_verified:b[53]!=0,logic_power:b[54]!=0,motion_active:b[55]!=0,
         effective_iq_raw:u32_at(b,56),effective_velocity_raw:u32_at(b,60),mode:b[64],safety_phase:b[65],limits_valid:b[66]!=0,pending_action:b[67],
@@ -250,6 +266,17 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn volatile_defaults_and_optional_home_return_are_explicit() {
+        let mut payload=vec![0;105];payload[92]=2;
+        let p=encode(1,&req(Command::ApplyConfiguration{payload})).unwrap();
+        assert_eq!(p[22+92],2);
+        let config=[16384,1,14,1,2000000,16,0,16383,4800,3,u32::MAX];
+        let p=encode(1,&req(Command::EncoderTemporary{config})).unwrap();
+        assert_eq!(p.len(),68);assert_eq!(p[67],1);
+        let p=encode(1,&req(Command::HomingAdaptive{velocity_rpm:Some(4000),return_positive:Some(false)})).unwrap();
+        assert_eq!(p[26],134);
+    }
     #[test]
     fn ramp_apply_extension_fits_gateway_frame() {
         let mut payload=vec![0;105];payload[92]=1;
@@ -379,6 +406,20 @@ mod tests {
         let read=req(Command::HomingConfigRead);assert_eq!(encode(16,&read).unwrap().len(),22);
         let start=encode(9,&req(Command::HomingStart{direction:1,step_unit:100,dual:true})).unwrap();
         assert_eq!(&start[22..],&[3,1,100,0,2]);
+        for motor in [15,16] {
+            let linked=encode(motor,&req(Command::HomingLinked{direction:0,step_unit:100,dual:true,motor_mask:0xc000,complex:false})).unwrap();
+            assert_eq!(&linked[22..],&[3,0,100,0,10,0,192]);
+        }
+        assert!(encode(14,&req(Command::HomingLinked{direction:0,step_unit:100,dual:true,motor_mask:0xc000,complex:false})).is_err());
+        let reverse=encode(15,&req(Command::HomingStart{direction:2,step_unit:100,dual:true})).unwrap();
+        assert_eq!(&reverse[22..],&[3,0,100,0,34]);
+        let reverse_pair=encode(15,&req(Command::HomingLinked{direction:2,step_unit:100,dual:true,motor_mask:0xc000,complex:true})).unwrap();
+        assert_eq!(&reverse_pair[22..],&[3,0,100,0,58,0,192]);
+        assert!(encode(15,&req(Command::HomingStart{direction:2,step_unit:100,dual:false})).is_err());
+        let adaptive=encode(1,&req(Command::HomingAdaptive{velocity_rpm:None,return_positive:None})).unwrap();
+        assert_eq!(&adaptive[22..],&[3,0,100,0,6]);
+        let speed=encode(1,&req(Command::HomingAdaptive{velocity_rpm:Some(4000),return_positive:None})).unwrap();
+        assert_eq!(&speed[22..],&[3,0,100,0,6,160,15]);
         assert!(encode(9,&req(Command::Homing{direction:1,step_unit:100,dual:true,config,debug_pi:false})).is_err());
     }
     #[test]
@@ -536,7 +577,7 @@ mod tests {
                 }
             }
             if action==2||action==3 {
-                q.request_id+=1;q.command=Command::Permit{enabled:true,lease_ms:3000};
+                q.request_id+=1;q.command=Command::GetState;
                 let r=call(9,&q)?;if r.result!=0{return Err(r.result_name.into());}
             }
             q.request_id+=1;q.command=Command::Commission{action};
@@ -547,7 +588,7 @@ mod tests {
                 q.request_id+=1;q.command=Command::Pulse;
                 let r=call(0,&q)?;if r.result!=0{return Err(r.result_name.into());}
                 if action==2||action==3 {
-                    q.request_id+=1;q.command=Command::Permit{enabled:true,lease_ms:3000};
+                    q.request_id+=1;q.command=Command::GetState;
                     let r=call(9,&q)?;if r.result!=0{return Err(r.result_name.into());}
                 }
                 q.request_id+=1;q.command=Command::GetState;
@@ -563,7 +604,7 @@ mod tests {
             }
             Ok(())
         })();
-        q.request_id+=1;q.command=Command::Permit{enabled:false,lease_ms:0};let _=call(9,&q);
+        q.request_id+=1;q.command=Command::DriveDisable;let _=call(9,&q);
         q.request_id+=1;q.command=Command::Close;let _=call(0,&q);
         assert!(result.is_ok(),"{result:?}");
     }
@@ -634,7 +675,7 @@ mod tests {
         let r=port.call(0,GATEWAY_OP,&encode(0,&q).unwrap()).unwrap();
         assert_eq!(decode(0,&q,&r).unwrap().device.unwrap().capabilities,0);
         let r=port.call(9,GATEWAY_OP,&encode(9,&q).unwrap()).unwrap();
-        let m=decode(9,&q,&r).unwrap().motor.unwrap();assert!(!m.config_verified&&!m.align_valid&&!m.permit);
+        let m=decode(9,&q,&r).unwrap().motor.unwrap();assert!(!m.config_verified&&!m.align_valid);
         assert!(port.call(9,1,&[0x5a,0x00,0,0,9,0x81]).is_err()); // legacy PWM/mode write blocked
         assert!(port.call(9,5,&[1]).is_err()); // legacy logic enable blocked
         assert!(port.call(9,12,&[0,100,0,2]).is_err()); // legacy homing blocked

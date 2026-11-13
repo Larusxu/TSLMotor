@@ -52,7 +52,7 @@ try{
  }
  for(const group of [0,1,2]){await motion.command(1,{kind:'pi_tune',group,expected_config:original[0],coefficients:original.slice(1)});await motion.wait(1,5000,r=>!r.pending);}
  if(!writesOnly){
- await motion.permit(1,true);
+
  await motion.taskCommand(1,0,Math.floor(1000*m.COUNTS_PER_RPM),{kind:'logical_move',position:String(Math.round(Number(state.logical_span)/2))});
  await motion.wait(1,90000,r=>!r.motor.motion_active&&Math.abs(Number(r.motor.logical_position)-Number(state.logical_span)/2)<Number(state.logical_span)*.002);
  await motion.stop(1,true);await motion.wait(1,10000,r=>r.motor.drive===0);
@@ -71,5 +71,5 @@ finally{
  const m=await import(lib('motor-profile-ui'));if(JSON.stringify((await m.readMotorProfile(1)).data)!==JSON.stringify(profile))throw Error('W25 changed');
  console.log('RESTORED_PI_AND_SPEED_W25_UNCHANGED');
  }}catch(e){console.error('RESTORE_FAILED',e.message);process.exitCode=1;}
- finally{try{if(motion){await motion.permit(1,false);await motion.close();}}finally{await h.close();}}
+ finally{try{if(motion){await motion.command(1,{kind:"drive_disable"});await motion.close();}}finally{await h.close();}}
 }

@@ -1,4 +1,8 @@
 .firmware-workbench{display:grid;gap:16px;max-width:1400px;margin:auto}
+.firmware-steps{display:flex;flex-wrap:wrap;gap:12px;margin-top:18px;color:var(--text-2);font-size:13px}
+.firmware-steps span{padding:8px 12px;border:1px solid var(--line);border-radius:6px}
+.firmware-steps .active{color:var(--accent);border-color:var(--accent)}
+.firmware-image{border-top:1px solid var(--line);margin-top:20px;padding-top:20px}
 .firmware-setup,.firmware-output{padding:20px}
 .firmware-heading{display:flex;align-items:center;gap:10px;margin-bottom:18px}
 .firmware-heading h2{font-size:16px;margin:0;flex:1}

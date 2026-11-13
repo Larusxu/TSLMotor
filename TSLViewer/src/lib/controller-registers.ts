@@ -44,7 +44,7 @@ export function cylinderControlRegisters(ch:number):ControlRegister[]{
  const b=1024+32*(ch-1);
  return [
   {address:b,name:`C${ch} 行程目标`,count:1,unit:"0.01%",description:"写入0–10000为行程百分比；该地址读取值为原协议目标步数"},
-  {address:b+11,name:`C${ch} 运动授权`,count:1,description:"0关闭，1开启"},
+  {address:b+11,name:`C${ch} 使能`,count:1,description:"主控运行使能：1允许行程命令，0停止并禁止行程命令；上电默认0，不控制电缸供电"},
   {address:b+12,name:`C${ch} 停止`,count:1,command:true,description:"写入触发停止，不重放"},
   {address:b+13,name:`C${ch} 到初始位`,count:1,command:true,description:"写入触发移动至已保存初始位置"},
   {address:b+14,name:`C${ch} 清除故障`,count:1,command:true,description:"写入触发清除电缸故障"},

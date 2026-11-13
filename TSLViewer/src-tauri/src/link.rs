@@ -1,7 +1,7 @@
 //! Serial link: datagram transactions, RTMI streaming and capture buffers.
 
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -100,6 +100,7 @@ struct Port {
 pub struct Link {
     pub parameters: Mutex<crate::motor_parameters::ParameterBank>,
     port: Mutex<Option<Port>>,
+    command_waiters: AtomicUsize,
     paused: AtomicBool,
     running: AtomicBool,
     axis: axis::Axis,
@@ -129,6 +130,7 @@ impl Link {
         Self {
             parameters: Mutex::new(crate::motor_parameters::ParameterBank::default()),
             port: Mutex::new(None),
+            command_waiters: AtomicUsize::new(0),
             paused: AtomicBool::new(false),
             running: AtomicBool::new(false),
             axis: axis::Axis::new(),
@@ -245,8 +247,26 @@ impl Link {
 
     pub fn gateway_control(&self, motor:u8, op:u8, data:&[u8])->Result<Vec<u8>> {
         if op==6 || op==11 || (op==5 && data==[0]) {self.parameters.lock().invalidate();}
-        let mut guard = self.port.try_lock_for(Duration::from_millis(100))
-            .ok_or_else(|| LinkError::Io("通信忙，请等待当前事务结束后重试".into()))?;
+        // Keep complete request/reply transactions atomic. Queued status reads
+        // yield to user commands; an already transmitted read must finish first.
+        let background = matches!(op,4|13|16) ||
+            (op==crate::semantic_control::GATEWAY_OP && data.len()>=22 && data[1]==1);
+        let mut guard = if background {
+            loop {
+                while self.command_waiters.load(Ordering::Acquire)>0 {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                let guard = self.port.lock();
+                // A command may have arrived while this read waited for the port.
+                if self.command_waiters.load(Ordering::Acquire)==0 {break guard;}
+                drop(guard);
+            }
+        } else {
+            self.command_waiters.fetch_add(1,Ordering::AcqRel);
+            let guard=self.port.lock();
+            self.command_waiters.fetch_sub(1,Ordering::AcqRel);
+            guard
+        };
         let p = guard.as_mut().ok_or(LinkError::NotConnected)?;
         if !p.sp.gateway(){return Err(LinkError::ValueError("Main controller mode required".into()));}
         p.sp.call(motor,op,data).map_err(|e|LinkError::Io(e.to_string()))
@@ -881,5 +901,53 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let na: u32 = a.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0);
     let nb: u32 = b.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0);
     na.cmp(&nb).then_with(|| a.cmp(b))
+}
+
+#[cfg(test)] mod scheduling_tests {
+    use super::*;
+    use crate::split_storage as ss;
+    #[test]
+    #[ignore="Real controller: concurrent status polling and unchanged common Flash save; no motion"]
+    fn hardware_configuration_during_polling() {
+        let port=std::env::var("MOTO_STORAGE_RS485").expect("explicit test port required");
+        let link=Arc::new(Link::new());link.open(&port,1500000,"main485",15).unwrap();
+        let run=Arc::new(AtomicBool::new(true));
+        let readers:Vec<_>=(0..3).map(|i|{
+            let link=link.clone();let run=run.clone();
+            thread::spawn(move||{let(mut n,mut timeouts)=(0,0);while run.load(Ordering::Acquire){
+                match link.gateway_control(if i==0{0}else{14+i},if i==0{4}else{13},&[]) {
+                    Ok(_)=>n+=1,
+                    Err(LinkError::Io(e)) if e.contains("超时")=>timeouts+=1,
+                    Err(e)=>panic!("Unexpected status failure: {e}"),
+                }
+                thread::sleep(Duration::from_millis(2));
+            }(n,timeouts)})
+        }).collect();
+        let call=|q:&ss::Request|ss::decode(0,q,&link.gateway_control(0,33,&ss::encode(0,q).unwrap()).unwrap()).unwrap();
+        let job=|id,operation|{
+            let mut q=ss::Request{id,operation,offset:0,data:vec![]};let start=Instant::now();let mut r=call(&q);
+            while r.phase==2||r.phase==3 {
+                assert!(start.elapsed()<Duration::from_secs(15));thread::sleep(Duration::from_millis(20));q.operation=6;r=call(&q);
+            }
+            assert_eq!(r.result,0);assert_eq!(r.phase,4);
+            q.operation=6;q.offset=106;let tail=call(&q);assert_eq!(tail.result,0);r.data.extend(tail.data);r.data
+        };
+        let outcome=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||{
+            let id=(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()%0xfffffff0) as u32;
+            let original=job(id,7);assert_eq!(original.len(),128);
+            let start=Instant::now();
+            for offset in [0,106] {
+                let q=ss::Request{id:id+1,operation:2,offset:offset as u8,data:original[offset..(offset+106).min(128)].to_vec()};
+                let r=call(&q);assert_eq!(r.result,0);assert_eq!(r.phase,1);
+            }
+            job(id+1,8);assert_eq!(job(id+2,7),original);
+            eprintln!("PASS configuration under concurrent polling, save/readback={} ms",start.elapsed().as_millis());
+        }));
+        run.store(false,Ordering::Release);
+        for reader in readers{let(n,timeouts)=reader.join().unwrap();eprintln!("background queries={n}, bounded read timeouts={timeouts}");}
+        // A Flash erase can delay a status reply; the next query must recover.
+        link.gateway_control(15,13,&[]).unwrap();link.gateway_control(16,13,&[]).unwrap();
+        link.close();if let Err(e)=outcome{std::panic::resume_unwind(e);}
+    }
 }
 

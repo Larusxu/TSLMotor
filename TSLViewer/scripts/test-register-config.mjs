@@ -10,3 +10,12 @@ for(const [off,v] of [[24,34140],[28,179*65536+384],[32,179*65536+384],[36,250*6
 defaults[20]=180;defaults[22]=60;
 for(let motor=1;motor<=16;motor++){const d=a.seedArchive(motor,defaults,common);assert.equal(d.main[12],motor);assert.equal(m.word(d.main,32),179*65536+384);assert.equal(m.word(d.main,40),250*65536);assert.equal(m.word(d.main,44),1000*65536);assert.equal(m.word(d.extra,44),100);assert.equal(m.word(d.main,120),m.crc32(d.main.slice(0,120)));assert.equal(m.word(d.extra,120),m.crc32(d.extra.slice(0,120)));assert.equal(d.main[16]&1,0);assert(Number.isInteger(a.fieldValue(d,a.archiveGroups['运动'][1])));}
 console.log('PASS default archive generation M1-M16, PI, Ramp, CRC, calibration reset, integer display');
+const homeModule=ts.transpileModule(fs.readFileSync('src/lib/home-config.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ES2022,target:ts.ScriptTarget.ES2022}}).outputText;
+const {validateHomeConfig}=await import(data(homeModule));
+const home=[600,1050,50,800,8000,0,0,60];
+assert.doesNotThrow(()=>validateHomeConfig(home));
+assert.doesNotThrow(()=>validateHomeConfig(home.map((v,i)=>i===4?28730:v)));
+assert.throws(()=>validateHomeConfig(home.map((v,i)=>i===4?28731:v)),/推进速度上限/);
+assert.throws(()=>validateHomeConfig(home.map((v,i)=>i===4?8000.5:v)),/步长 1/);
+assert.throws(()=>validateHomeConfig(home.map((v,i)=>i===3?630:v)),/接触阈值/);
+console.log('PASS homing 8000rpm, speed ceiling, integer input and contact threshold validation');

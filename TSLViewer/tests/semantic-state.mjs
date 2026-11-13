@@ -8,7 +8,7 @@ const js = ts.transpileModule(readFileSync(new URL('../src/lib/semantic-state.ts
 function load(invoke = () => assert.fail('unexpected invoke'), hardware = true) {
   const exports = {};
   new Function('exports', 'require', js)(exports, name => {
-    if (name === './api') return { HAS_TAURI: hardware };
+    if (name === './api') return { invokeCommand: hardware ? invoke : () => Promise.reject(Error('浏览器预览没有后端')) };
     if (name === '@tauri-apps/api/core') return { invoke };
     throw new Error(name);
   });
@@ -32,13 +32,13 @@ test('device and motor share boot, exact decimal identity/count and freshness', 
 test('all calls are zero-session read-only discovery; no browser fake state', async () => {
   const calls=[];
   const {SemanticStateSource}=load(async(command,{motor,request:q})=>{
-    calls.push(command);assert.deepEqual(q.command,{kind:motor?'position_state':'get_state'});
+    calls.push(command);assert.deepEqual(q.command,{kind:calls.length===3?'telemetry_state':motor?'position_state':'get_state'});
     assert.equal(q.boot_id,'0');assert.equal(q.session_id,0);assert.equal(q.task_id,0);
     return reply(motor,q.request_id,'0');
   });
   const v=await new SemanticStateSource().poll(9);
   assert.equal(v.bootId,'0');assert.equal(v.state.align_valid,false);
-  assert.deepEqual(calls,['motor_semantic','motor_semantic']);
+  assert.deepEqual(calls,['motor_semantic','motor_semantic','motor_semantic']);
   const preview=await new (load(undefined,false).SemanticStateSource)().poll(9);
   assert.equal(preview.state,null);assert.match(preview.error,/浏览器/);
 });

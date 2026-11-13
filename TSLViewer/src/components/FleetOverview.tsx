@@ -6,7 +6,9 @@ import type { MaxChip, PowerOutput } from "../lib/fleet";
 import { STATIC_CHANNEL_MOTORS } from "../lib/fleet";
 import type { MotorState } from "../lib/semantic-state";
 import type { CylinderModel } from "../lib/cylinder";
+import { cylinderDisplayName } from "../lib/cylinder-names";
 import { tempC, fmt } from "../lib/units";
+import { motorDisplayName, motorJointName } from "../lib/motor-names";
 import { Badge, Card, Icon, Toggle } from "./ui";
 
 const modes = ["位置直通", "位置插补", "速度直通", "速度斜坡"];
@@ -91,11 +93,12 @@ export default function FleetOverview({ cylinders }: { cylinders: CylinderModel 
           const s=row.status,online=!!s?.online&&app.connected,fault=online?s?.fault??0:0;
           const names=[[1,"堵转"],[2,"过温"],[4,"过流"],[8,"电机异常"],[16,"存储异常"]] as const;
           return <article className="fleet-cylinder" key={i}>
-            <header><strong>C{i+1}</strong><span className={fault?"fleet-danger":online?"fleet-good":"muted"}>{online?"在线":"离线"}</span><i className={`fleet-dot ${fault?"warn":online?"ok":"stale"}`} aria-hidden="true"/></header>
+            <header><strong>{cylinderDisplayName(i+1)}</strong><span className={fault?"fleet-danger":online?"fleet-good":"muted"}>{online?"在线":"离线"}</span><i className={`fleet-dot ${fault?"warn":online?"ok":"stale"}`} aria-hidden="true"/></header>
             <div className="fleet-cylinder-position"><span>实际行程</span><b>{online?(s!.position<<16>>16):"—"}<small> 步</small></b></div>
             <div className="fleet-cylinder-track"><i style={{width:`${online?Math.max(0,Math.min(100,(s!.position<<16>>16)/20)):0}%`}}/></div>
             <dl>
               <div><dt>反馈电流</dt><dd>{online?`${s!.current_ma} mA`:"—"}</dd></div>
+              <div><dt>使能</dt><dd>{online?(s!.enabled?"已使能":"未使能"):"—"}</dd></div>
               <div><dt>温度</dt><dd>{online?`${s!.temperature_c} °C`:"—"}</dd></div>
               <div><dt>回温启动</dt><dd>{online?`${s!.restart_c} °C`:"—"}</dd></div>
               <div><dt>故障</dt><dd className={fault?"fleet-danger":""}>{!online?"—":fault?names.filter(([bit])=>fault&bit).map(([,name])=>name).join(" / ")||`代码 ${fault}`:"无"}</dd></div>
@@ -113,21 +116,23 @@ export default function FleetOverview({ cylinders }: { cylinders: CylinderModel 
           })}
         </div>
       ) : (
-        <div className="fleet-list" role="table" aria-label="电机阵列列表">
+        <div className="fleet-list-columns">
+        {[0,8].map(offset => <div key={offset} className="fleet-list" role="table" aria-label={`电机 M${offset+1}–M${offset+8}，双击选择电机`}>
           <div className="fleet-list-head" role="row">
-            <span role="columnheader">电机</span><span role="columnheader">TMC</span>
-            <span role="columnheader">温度</span><span role="columnheader">力矩电流</span>
-            <span role="columnheader">输入电流</span><span role="columnheader">输入电压</span>
+            <span role="columnheader">电机</span><span role="columnheader">关节</span><span role="columnheader">TMC</span>
+            <span role="columnheader">温度<small>°C</small></span><span role="columnheader">力矩电流<small>mA</small></span>
+            <span role="columnheader">输入电流<small>mA</small></span><span role="columnheader">输入电压<small>V</small></span>
             <span role="columnheader">编码器</span><span role="columnheader">找零</span>
             <span role="columnheader">模式</span><span role="columnheader">供电</span>
           </div>
-          {Array.from({ length: 16 }, (_, i) => {
-            const id = i + 1;
+          {Array.from({ length: 8 }, (_, i) => {
+            const id = offset + i + 1;
             return <MotorRow key={id} id={id} selected={app.motor === id} fresh={fresh(id)}
               supplyFresh={supplyFresh} power={power[id-1]&&{...power[id-1],enabled:desired[id]??power[id-1].enabled}} state={motors[id]?.state}
               switching={!!switching[id]} onSelect={() => app.setMotor(id)}
               onToggle={(on) => void toggleSupply(id, on)} />;
           })}
+        </div>)}
         </div>
       )}
     </Card>
@@ -195,7 +200,7 @@ function MotorCard({ id, fresh, supplyFresh, power, state, switching, onToggle }
     onClick={() => app.setMotor(id)}
     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); app.setMotor(id); } }}>
     <div className="fleet-motor-head">
-      <strong>M{String(id).padStart(2, "0")}</strong>
+      <strong>{motorDisplayName(id)}</strong>
       <span className={tmc.cls}>{tmc.text}</span>
       <i className={`fleet-dot ${tone}`} aria-hidden="true" />
     </div>
@@ -229,19 +234,21 @@ function MotorRow({ id, selected, fresh, supplyFresh, power, state, switching, o
   const tone = dotTone(power?.enabled === true && (!!power?.fault || !!state?.fault), !supplyFresh || !fresh || !online);
   const live = fresh && online;
   return <div className={`fleet-row ${selected ? "selected" : ""}`} role="row" tabIndex={0}
-    onClick={onSelect}
+    aria-selected={selected} title={`双击选择 ${motorDisplayName(id)}`}
+    onDoubleClick={onSelect}
     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }}>
     <span role="cell" className="fleet-row-id"><i className={`fleet-dot ${tone}`} aria-hidden="true" />M{String(id).padStart(2, "0")}</span>
+    <span role="cell" className="fleet-row-joint">{motorJointName(id) || "—"}</span>
     <span role="cell" className={online ? "fleet-good" : power?.enabled ? "fleet-danger" : "muted"}>{online ? "在线" : power?.enabled ? "掉线" : "未确认"}</span>
-    <span role="cell">{live && state?.temperature_raw != null ? `${fmt(tempC(state.temperature_raw * 65536, app.cal.tempOffset), 1)} °C` : "—"}</span>
-    <span role="cell">{live && state ? `${fmt(state.iq_raw * app.cal.maPerCount, 0)} mA` : "—"}</span>
-    <span role="cell">{supplyFresh ? AMP(power?.current_ma) : "—"}</span>
-    <span role="cell">{supplyFresh ? VOLT(power?.voltage_mv) : "—"}</span>
+    <span role="cell">{live && state?.temperature_raw != null ? fmt(tempC(state.temperature_raw * 65536, app.cal.tempOffset), 1) : "—"}</span>
+    <span role="cell">{live && state ? fmt(state.iq_raw * app.cal.maPerCount, 0) : "—"}</span>
+    <span role="cell">{supplyFresh && power?.current_ma != null ? fmt(power.current_ma, 0) : "—"}</span>
+    <span role="cell">{supplyFresh && power?.voltage_mv != null ? (power.voltage_mv / 1000).toFixed(2) : "—"}</span>
     <span role="cell">{!live ? "未确认" : state?.align_valid ? "有效" : "待标定"}</span>
     <span role="cell">{!live ? "未确认" : state?.span_valid ? "有效" : "待找零"}</span>
     <span role="cell">{live && state ? modes[state.mode] ?? "未知" : "—"}</span>
     <span role="cell" className="fleet-row-switch">
-      <div onKeyDown={e=>e.stopPropagation()}><Toggle checked={!!power?.enabled} disabled={!app.connected || switching}
+      <div onDoubleClick={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()}><Toggle checked={!!power?.enabled} disabled={!app.connected || switching}
         label={`M${id} 输入供电开关`} onChange={onToggle} /></div>
     </span>
   </div>;

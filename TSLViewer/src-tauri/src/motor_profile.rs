@@ -1,9 +1,9 @@
 //! MCU-owned MTR1 W25 archive payload. The historical dual-slot codec below
-//! is retained for offline migration tests; never use it for physical M24.
+//! validates only RUN2 records; never use it for physical M24.
 //! No serial access and no implicit
 //! migration of TSL1 (which persisted obsolete mechanical coordinates).
 //! Keep identical to firmware los_moto_profile.c; golden vector is generated
-//! by the actual C implementation, not by this decoder.
+//! from the shared on-flash record layout.
 pub const SIZE: usize = 128;
 pub const COMMIT: u32 = 0x31544d43;
 pub const PI_MASK: u32 = 0x007fffff;
@@ -35,22 +35,20 @@ fn u32_at(p: &[u8], i: usize) -> u32 { u32::from_le_bytes(p[i..i+4].try_into().u
 impl Profile {
     pub fn validate(&self) -> Result<(), Error> {
         let w=&self.words;
-        let run2=self.run[0]==0x324e5552;
+        if self.run[0]!=0x324e5552 {return Err(Error::Schema);}
         if !(1..=16).contains(&self.motor_id) || !(1..=16).contains(&self.board_slot_id)
             || self.flags & !3 != 0 || self.pole_pairs == 0 || self.pole_pairs > 127
             || self.sensor_direction > 1 || w[0] > 65535 || w[2] & !PI_MASK != 0
             || w[7] & 0x80008000 != 0 || w[8] > 0x7fffffff || w[9] > 65535
-            || (!run2&&w[10]!=0) || (run2&&(w[10]==0||w[10]>0x7fffffff)) || w[11] == 0
+            || (w[10]==0||w[10]>0x7fffffff) || w[11] == 0
             || (self.flags & 2 != 0 && (w[3..7].contains(&0) || w[7] >> 16 == 0 || w[8] == 0 || w[9] == 0))
         { return Err(Error::Range); }
         let r=&self.run;
-        if r[0]==0 {if r.iter().any(|v|*v!=0){return Err(Error::Schema);}}
-        else if (r[0]!=0x314e5552&&!run2) || r[1]==0||r[1]>0x7fffff||r[2]==0||r[2]>0x7fffff||
+        if r[1]==0||r[1]>0x7fffff||r[2]==0||r[2]>0x7fffff||
             r[3]==0||r[3]>32767||r[4]<20||r[4]>10000||r[5]<20||r[5]>1000||
             r[6]<100||r[6]>5000||r[6]<2*r[5]||r[4]<r[5]||r[7]<r[6]||r[7]>10000||
             r[8]==0||r[9]>3||!(1..=2).contains(&r[10])||
-            (!run2&&(r[11]>0x7fffff||r[11]>=w[8]))||
-            (run2&&(r[11]==0||r[11]>0x7ffffff||r[11]>if r[9]>=2{w[10]}else{w[8]}))||
+            ((r[11]==0||r[11]>0x7ffffff||r[11]>if r[9]>=2{w[10]}else{w[8]}))||
             r[12]>0x7fffff||r[12]>w[8]||(r[9]==3&&r[1]!=r[2]) {return Err(Error::Range);}
         Ok(())
     }
@@ -115,7 +113,7 @@ mod tests {
         v.run[11]=v.words[10]+1;assert_eq!(v.validate(),Err(Error::Range));
     }
     #[test]
-    fn c_firmware_golden_vector() {
+    fn current_format_golden_vector() {
         let p=include_bytes!("../../tests/fixtures/motor-profile-v1.bin");
         let v=Profile::decode(p,9,9,0x12345678).unwrap();
         assert_eq!(v.words[0],43210);assert_eq!(v.encode().unwrap(),*p);

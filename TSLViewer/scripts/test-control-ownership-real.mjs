@@ -26,7 +26,7 @@ try{
  motion=(await import(lib('semantic-motion'))).semanticMotion;
  pi=(await import(lib('pi-auto/service'))).piAuto;
  const m=await import(lib('motor-profile-ui'));
- await motion.open(9);await motion.initialize(9);await motion.permit(9,true);
+ await motion.open(9);await motion.initialize(9);
  await motion.wait(9,10000,r=>r.motor?.feedback_fresh&&r.motor.config_verified);
  profile=(await m.readMotorProfile(9)).data;original=await pi.livePi(9);
  const pid=m.pidFromProfile(profile);
@@ -37,8 +37,8 @@ try{
  const applied=await pi.livePi(9),saved=(await m.readMotorProfile(9)).data;
  assert.equal(applied[3],trial.vel_p*65536+trial.vel_i);
  assert.deepEqual(saved.slice(28,48),profile.slice(28,48),'motion apply must not persist trial PI');
- assert.equal((await motion.command(9,{kind:'position_state'})).motor.permit,true);
- console.log('PASS current PID-page PI applied to TMC; W25 PI unchanged; permit retained');
+ assert.equal((await motion.command(9,{kind:'position_state'})).motor.fault,0);
+ console.log('PASS current PID-page PI applied to TMC; W25 PI unchanged; configuration retained');
  await m.applyMotorConfiguration(9,pid,cfg);
  assert.deepEqual((await m.readMotorProfile(9)).data,profile);
  for(const velocity of [Math.round(300*m.COUNTS_PER_RPM),-Math.round(300*m.COUNTS_PER_RPM)]){
@@ -49,13 +49,13 @@ try{
   const active=(await motion.command(9,{kind:'position_state'})).motor;
   await motion.stop(9,true);await motion.wait(9,10000,r=>r.motor?.drive===0&&!r.motor.motion_active);
   const after=(await motion.command(9,{kind:'position_state'})).motor;
-  console.log('OPEN_LOOP',JSON.stringify({velocity,before:before.position,active:active.position,after:after.position,permit:after.permit,home:after.span_valid,temperature:after.temperature_raw,fault:after.fault,error:after.last_error}));
-  assert.equal(after.fault,0);assert.equal(after.last_error,0);assert(after.logic_power&&after.permit);
+  console.log('OPEN_LOOP',JSON.stringify({velocity,before:before.position,active:active.position,after:after.position,home:after.span_valid,temperature:after.temperature_raw,fault:after.fault,error:after.last_error}));
+  assert.equal(after.fault,0);assert.equal(after.last_error,0);assert(after.logic_power);
   assert.notEqual(active.position,before.position,'open-loop shaft feedback must move');
   assert.equal(Math.sign(Number(active.position)-Number(before.position)),Math.sign(velocity));
  }
  assert.deepEqual((await m.readMotorProfile(9)).data,profile);
- console.log('PASS bidirectional open-loop jog, release PWM OFF, power/permit retained, W25 unchanged');
+ console.log('PASS bidirectional open-loop jog, release PWM OFF, power/configuration retained, W25 unchanged');
 }finally{
  try{
   if(motion){await motion.stop(9,true);await motion.wait(9,10000,r=>r.motor?.drive===0&&!r.motor.motion_active);}
@@ -67,5 +67,5 @@ try{
    assert.deepEqual(await pi.livePi(9),original);
    console.log('RESTORED original TMC PI and original W25 profile');
   }
- }finally{try{if(motion){await motion.permit(9,false);await motion.close();}}finally{await h.close();}}
+ }finally{try{if(motion){await motion.command(9,{kind:"drive_disable"});await motion.close();}}finally{await h.close();}}
 }

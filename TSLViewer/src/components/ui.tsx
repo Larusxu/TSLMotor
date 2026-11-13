@@ -458,6 +458,7 @@ export function Button({
   block,
   title,
   className = "",
+  pressed,
 }: {
   children?: React.ReactNode;
   onClick?: () => void;
@@ -468,6 +469,7 @@ export function Button({
   block?: boolean;
   title?: string;
   className?: string;
+  pressed?: boolean;
 }) {
   return (
     <button
@@ -475,6 +477,7 @@ export function Button({
       onClick={onClick}
       disabled={disabled}
       title={title}
+      aria-pressed={pressed}
     >
       {icon}
       {children}

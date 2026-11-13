@@ -469,9 +469,36 @@ pub struct PidSnapshot {
 }
 
 pub fn read_pid(link: &Link) -> Result<PidSnapshot> {
-    let snap=read_pid_raw(link)?;
-    crate::motor_parameters::observe(link,snap.clone()).map_err(LinkError::ValueError)?;
+    read_pid_for(link,link.focused_motor())
+}
+pub fn read_pid_for(link: &Link,motor:u8) -> Result<PidSnapshot> {
+    let snap=if link.is_gateway(){read_pid_scheduled(link,motor)?}else{read_pid_raw(link)?};
+    crate::motor_parameters::observe_for(link,motor,snap.clone()).map_err(LinkError::ValueError)?;
     Ok(snap)
+}
+fn read_pid_scheduled(link:&Link,motor:u8)->Result<PidSnapshot>{
+    if !(1..=16).contains(&motor){return Err(LinkError::ValueError("电机编号无效".into()));}
+    let call=|start:u8|->Result<Vec<u8>>{
+        let mut q=vec![0u8;24];q[0]=2;q[1]=1;q[2]=1;q[22]=7;q[23]=start;
+        let r=link.gateway_control(motor,32,&q)?;
+        if r.len()!=92||r[0]!=2||r[1]!=1||r[2..6]!=q[2..6]||r[22]!=0{
+            return Err(LinkError::ValueError(format!("M{motor} TMC 在线读取被拒绝，结果码 {}",r.get(22).copied().unwrap_or(255))));
+        }Ok(r)
+    };
+    let first=call(1)?;let boot=first[6..14].to_vec();
+    let seq=u32::from_le_bytes(first[28..32].try_into().unwrap());
+    let until=Instant::now()+Duration::from_secs(6);
+    loop{
+        let r=call(0)?;
+        if r[6..14]!=boot{return Err(LinkError::ValueError("读取期间主控已重启".into()));}
+        let words:Vec<u32>=r[28..].chunks_exact(4).map(|v|u32::from_le_bytes(v.try_into().unwrap())).collect();
+        if words[0]!=seq&&words[2]==0 {
+            if words[3]!=0{return Err(LinkError::ValueError(format!("M{motor} TMC 寄存器读取失败，结果 {}",words[3] as i32)));}
+            let v=&words[4..];return Ok(PidSnapshot{config:v[0],flux_coeff:v[1],torque_coeff:v[2],vel_coeff:v[3],pos_coeff:v[4],tf_limits:v[5],vel_limit:v[6],uq_ud_limit:v[7],integrators:v[8..12].try_into().unwrap()});
+        }
+        if Instant::now()>until{return Err(LinkError::ValueError(format!("M{motor} TMC 在线读取超时")));}
+        thread::sleep(Duration::from_millis(15));
+    }
 }
 pub fn read_pid_raw(link: &Link) -> Result<PidSnapshot> {
     Ok(PidSnapshot {

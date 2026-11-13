@@ -15,7 +15,7 @@ export default function TelemetryPanels(){
    state.logical_span!=null&&BigInt(state.logical_span)>2n*BigInt(state.margin_counts);
  const range=spanValid&&state?.logical_span!=null&&state.margin_counts!=null
    ?[BigInt(state.margin_counts),BigInt(state.logical_span)-BigInt(state.margin_counts)] as const:null;
- const enabled=app.mode!=="direct"&&app.connected&&!!range&&!!state?.permit&&
+ const enabled=app.mode!=="direct"&&app.connected&&!!range&&!!state&&
    (state.drive===0||state.drive===2)&&state.config_verified&&state.feedback_fresh&&!state.fault;
  const validMode=task.mode==="position_direct"||task.mode==="position_ramp";
  const canMove=enabled&&validMode&&Number.isFinite(task.max_rpm)&&task.max_rpm>0&&task.max_rpm<=28730;
@@ -24,7 +24,7 @@ export default function TelemetryPanels(){
  const current=range&&state?.logical_position!=null&&state.feedback_fresh
    ?Math.max(0,Math.min(100,Number((BigInt(state.logical_position)-range[0])*10000n/(range[1]-range[0]))/100)):null;
  const movePercent=async(p:number,token:number)=>{
-   if(!canMove||!range||!Number.isFinite(p)||p<0||p>100)throw Error("当前电机未满足有效行程与运动授权条件");
+   if(!canMove||!range||!Number.isFinite(p)||p<0||p>100)throw Error("当前电机未满足有效行程与驱动就绪条件");
    const target=(range[0]+(range[1]-range[0])*BigInt(Math.round(p*1000))/100000n).toString();
    await semanticMotion.taskCommand(app.motor,task.mode==="position_ramp"?1:0,
       Math.floor(task.max_rpm*COUNTS_PER_RPM),{kind:"logical_move",position:target},()=>token===epoch.current);

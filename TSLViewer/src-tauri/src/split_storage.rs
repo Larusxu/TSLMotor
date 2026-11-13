@@ -14,13 +14,13 @@ pub struct Response {
     pub flags: u8, pub offset: u8, pub data: Vec<u8>,
 }
 pub fn encode(motor:u8, q:&Request)->Result<Vec<u8>,String> {
-    if motor>16 || q.id==0 || !(1..=11).contains(&q.operation) ||
+    if motor>16 || q.id==0 || !(1..=15).contains(&q.operation) ||
        q.offset>128 || q.data.len()>106 || q.offset as usize+q.data.len()>128 ||
        (q.operation==2 && q.data.is_empty()) ||
        (q.operation!=2 && !q.data.is_empty()) ||
        (![2,6].contains(&q.operation) && q.offset!=0) ||
        ([4,5,9,10,11].contains(&q.operation) && motor==0) ||
-       ([7,8].contains(&q.operation) && motor!=0) {
+       ([7,8,12,13,14,15].contains(&q.operation) && motor!=0) {
         return Err("Invalid split-storage request".into());
     }
     let mut p=vec![1,q.operation]; p.extend(q.id.to_le_bytes());
@@ -35,7 +35,7 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String> {
     }
     let id=u32::from_le_bytes(p[2..6].try_into().unwrap());
     let result=i32::from_le_bytes(p[6..10].try_into().unwrap());
-    if id!=q.id || p[10]!=motor || p[11]<1 || p[11]>11 ||
+    if id!=q.id || p[10]!=motor || p[11]<1 || p[11]>15 ||
        (q.operation!=6 && p[11]!=q.operation) {
         // Older firmware returns the previous job's identity on rejection.
         // Report BUSY without exposing its data or treating it as our result.
@@ -52,6 +52,14 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String> {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn travel_configuration_public_only() {
+        for operation in [14,15] {
+            let q=Request{id:42,operation,offset:0,data:vec![]};
+            assert!(encode(0,&q).is_ok());assert!(encode(1,&q).is_err());
+            let mut p=vec![0;22];p[0]=1;p[1]=4;p[2]=42;p[11]=operation;
+            assert_eq!(decode(0,&q,&p).unwrap().operation,operation);
+        }
+    }
     #[test]
     #[ignore="Passive page navigation regression on COM10; no motor motion"]
     fn hardware_page_reads_without_owner(){
@@ -59,7 +67,7 @@ pub fn decode(motor:u8,q:&Request,p:&[u8])->Result<Response,String> {
         let port=std::env::var("MOTO_STORAGE_RS485").expect("test port required");
         let serial=serialport::new(port,1500000).timeout(Duration::from_millis(10)).dtr_on_open(false).open().unwrap();
         let mut t=crate::gateway::Transport::new(serial,"main485",9);
-        // Wait beyond the old five-second legacy lease, without OPEN/permit.
+        // Wait beyond the old five-second legacy lease, without OPEN.
         thread::sleep(Duration::from_millis(5200));
         let seed=(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()%0xffffffff) as u32;
         for (i,(motor,operation)) in [(0,7),(0,1),(9,1),(9,9),(0,7),(1,1),(0,1),(0,7)].into_iter().enumerate(){

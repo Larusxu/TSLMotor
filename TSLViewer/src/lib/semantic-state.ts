@@ -7,7 +7,7 @@ export interface DeviceState {
 export interface MotorState {
   sampled_at_ms: number; fault: number; last_error: number;
   position: string; negative_contact: string; positive_contact: string;
-  velocity_raw: number; iq_raw: number; connection: boolean; permit: boolean;
+  velocity_raw: number; iq_raw: number; connection: boolean;
   drive: number; align_valid: boolean; home_neg_valid: boolean; home_pos_valid: boolean;
   span_valid: boolean; motion_owner: number; feedback_fresh: boolean; config_verified: boolean;
   logic_power: boolean; motion_active: boolean; effective_iq_raw: number;
@@ -82,7 +82,7 @@ async function read(motor: number, id: number): Promise<SemanticReply> {
 }
 
 /** One read-only source. Discovery never opens/renews a session, grants a
- * permit, enables a drive, or reuses raw register values as readiness proof. */
+ * enables a drive, or reuses raw register values as readiness proof. */
 export class SemanticStateSource {
   private epoch = 0;
   private sequence = 0;

@@ -13,23 +13,7 @@
 //! | `I2C_EEPROM`  | `0xAA030000` | whole EEPROM copied into the I/O controller RAM  |
 //! | `RAM_READ`    | `0xCyyy0000` | `RESPONSE_1[15:0]`                              |
 //!
-//! Parameter block layout (two copies, A/B, so a torn write never loses both):
-//!
-//! ```text
-//! 0x00 .. 0x6F  block A (112 B)
-//! 0x70 .. 0xDF  block B (112 B)
-//! 0xE0 .. 0xFD  reserved
-//! 0xFE          scratch byte used by the write/read self test
-//!
-//! block:
-//!   [0..4)    "TSL1"
-//!   [4]       version (1)
-//!   [5]       payload length in bytes (92)
-//!   [6..8)    sequence, u16 little endian (higher = newer)
-//!   [8..100)  payload: 23 × u32 little endian, see `StoreParams`
-//!   [100]     CRC-8 (poly 0x07) over [0..100)
-//!   [101..112) 0xFF
-//! ```
+//! Motor archives use the MCU RUN2 storage API only.
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -41,7 +25,7 @@ use crate::regs;
 use crate::io_rom::{self, LinkPort};
 
 /// Two supplied datasheets do not define the ROM-to-M24C02 byte contract.
-/// Keep legacy codecs for explicit migration, but do not run byte operations
+/// Do not run byte operations
 /// or take SSI ownership based on that unverified assumption. No UI override.
 pub fn require_byte_contract() -> Result<()> {
     Err(LinkError::ValueError(
@@ -50,17 +34,8 @@ pub fn require_byte_contract() -> Result<()> {
 }
 
 pub const EEPROM_LEN: usize = 256;
-pub const BLOCK_LEN: usize = 112;
-pub const BLOCK_A: usize = 0x00;
-pub const BLOCK_B: usize = 0x70;
 pub const SCRATCH: usize = 0xFE;
 
-const MAGIC: [u8; 4] = *b"TSL1";
-const VERSION: u8 = 1;
-const PAYLOAD_WORDS: usize = 23;
-const PAYLOAD_LEN: usize = PAYLOAD_WORDS * 4;
-const HEADER_LEN: usize = 8;
-const CRC_OFFSET: usize = HEADER_LEN + PAYLOAD_LEN;
 /// M24C02 needs ≤5 ms per byte write; leave headroom.
 const WRITE_DELAY_MS: u64 = 6;
 
@@ -128,106 +103,6 @@ impl Default for StoreParams {
             ma_per_count_ua: 201,
         }
     }
-}
-
-impl StoreParams {
-    fn words(&self) -> [u32; PAYLOAD_WORDS] {
-        [
-            self.cpr,
-            self.poles,
-            self.csa_gain,
-            self.pwm_max_count,
-            self.phi_e_offset,
-            self.torque_limit_ma,
-            self.flux_limit_ma,
-            self.vel_limit_rpm,
-            self.uq_ud_limit,
-            self.cur_p,
-            self.cur_i,
-            self.vel_p,
-            self.vel_i,
-            self.pos_p,
-            self.pos_i,
-            self.flags,
-            self.motor_id,
-            self.axis_origin as u32,
-            self.axis_min as u32,
-            self.axis_max as u32,
-            self.lead_um,
-            self.counts_per_rpm_x10,
-            self.ma_per_count_ua,
-        ]
-    }
-}
-
-fn encode(params: &StoreParams, seq: u16) -> [u8; BLOCK_LEN] {
-    let mut b = [0xFFu8; BLOCK_LEN];
-    b[0..4].copy_from_slice(&MAGIC);
-    b[4] = VERSION;
-    b[5] = PAYLOAD_LEN as u8;
-    b[6..8].copy_from_slice(&seq.to_le_bytes());
-    for (i, w) in params.words().iter().enumerate() {
-        let o = HEADER_LEN + i * 4;
-        b[o..o + 4].copy_from_slice(&w.to_le_bytes());
-    }
-    b[CRC_OFFSET] = crc8(&b[..CRC_OFFSET]);
-    b
-}
-
-fn decode(b: &[u8]) -> Option<(StoreParams, u16)> {
-    if b.len() < BLOCK_LEN || b[0..4] != MAGIC {
-        return None;
-    }
-    if b[4] != VERSION || b[5] as usize != PAYLOAD_LEN {
-        return None;
-    }
-    if crc8(&b[..CRC_OFFSET]) != b[CRC_OFFSET] {
-        return None;
-    }
-    let mut w = [0u32; PAYLOAD_WORDS];
-    for (i, slot) in w.iter_mut().enumerate() {
-        let o = HEADER_LEN + i * 4;
-        *slot = u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
-    }
-    Some((
-        StoreParams {
-            cpr: w[0],
-            poles: w[1],
-            csa_gain: w[2],
-            pwm_max_count: w[3],
-            phi_e_offset: w[4],
-            torque_limit_ma: w[5],
-            flux_limit_ma: w[6],
-            vel_limit_rpm: w[7],
-            uq_ud_limit: w[8],
-            cur_p: w[9],
-            cur_i: w[10],
-            vel_p: w[11],
-            vel_i: w[12],
-            pos_p: w[13],
-            pos_i: w[14],
-            flags: w[15],
-            motor_id: w[16],
-            axis_origin: w[17] as i32,
-            axis_min: w[18] as i32,
-            axis_max: w[19] as i32,
-            lead_um: w[20],
-            counts_per_rpm_x10: w[21],
-            ma_per_count_ua: w[22],
-        },
-        u16::from_le_bytes([b[6], b[7]]),
-    ))
-}
-
-fn crc8(data: &[u8]) -> u8 {
-    let mut crc = 0u8;
-    for byte in data {
-        crc ^= *byte;
-        for _ in 0..8 {
-            crc = if crc & 0x80 != 0 { (crc << 1) ^ 0x07 } else { crc << 1 };
-        }
-    }
-    crc
 }
 
 // ---------------------------------------------------------------------------
@@ -370,59 +245,10 @@ pub struct SaveInfo {
     pub elapsed_ms: u128,
 }
 
-pub fn save(link: &Link, params: &StoreParams) -> Result<SaveInfo> {
-    let started = std::time::Instant::now();
-    enable_i2c_pins(link)?;
-    init_i2c(link, 100_000)?;
-    reject_new_layout(link)?;
-    // The pins are remapped now; never leave the bridge driving.
-    link.write_reg(
-        regs::MCC_MOTOR_MOTION,
-        regs::motor_motion(regs::MODE_PWM_OFF, params.poles, false, false),
-    )?;
-
-    let seq = next_seq(link)?.max(1);
-    let block = encode(params, seq);
-    write_bytes(link, BLOCK_A, &block)?;
-    let verified = read_bytes(link, BLOCK_A, BLOCK_LEN)? == block;
-    if !verified {
-        link.log("error", "storage", "参数块 A 回读不一致，未写 B");
-        return Ok(SaveInfo {
-            seq,
-            block: "A".into(),
-            bytes_written: BLOCK_LEN,
-            verified: false,
-            elapsed_ms: started.elapsed().as_millis(),
-        });
-    }
-    write_bytes(link, BLOCK_B, &block)?;
-    let ok_b = read_bytes(link, BLOCK_B, BLOCK_LEN)? == block;
-    link.log(
-        if ok_b { "info" } else { "warn" },
-        "storage",
-        format!(
-            "参数块写入 EEPROM：seq={seq}，A/B 校验{}",
-            if ok_b { "通过" } else { "B 不一致" }
-        ),
-    );
-    Ok(SaveInfo {
-        seq,
-        block: "A+B".into(),
-        bytes_written: BLOCK_LEN * 2,
-        verified: ok_b,
-        elapsed_ms: started.elapsed().as_millis(),
-    })
+fn retired_archive() -> LinkError {
+    LinkError::ValueError("旧电机档案接口已移除，请使用主控 RUN2 档案接口".into())
 }
-
-fn next_seq(link: &Link) -> Result<u16> {
-    let a = read_bytes(link, BLOCK_A, BLOCK_LEN)
-        .ok()
-        .and_then(|b| decode(&b).map(|(_, s)| s));
-    let b = read_bytes(link, BLOCK_B, BLOCK_LEN)
-        .ok()
-        .and_then(|b| decode(&b).map(|(_, s)| s));
-    Ok(a.unwrap_or(0).max(b.unwrap_or(0)).wrapping_add(1))
-}
+pub fn save(_link: &Link, _params: &StoreParams) -> Result<SaveInfo> {Err(retired_archive())}
 
 #[derive(Serialize)]
 pub struct LoadInfo {
@@ -435,55 +261,8 @@ pub struct LoadInfo {
     pub message: String,
 }
 
-pub fn load(link: &Link) -> Result<LoadInfo> {
-    enable_i2c_pins(link)?;
-    init_i2c(link, 100_000)?;
-    let raw_a = read_bytes(link, BLOCK_A, BLOCK_LEN)?;
-    let raw_b = read_bytes(link, BLOCK_B, BLOCK_LEN)?;
-    let a = decode(&raw_a);
-    let b = decode(&raw_b);
-    let (params, seq, block) = match (a.clone(), b.clone()) {
-        (Some((pa, sa)), Some((pb, sb))) => {
-            if sb > sa {
-                (Some(pb), sb, "B")
-            } else {
-                (Some(pa), sa, "A")
-            }
-        }
-        (Some((pa, sa)), None) => (Some(pa), sa, "A"),
-        (None, Some((pb, sb))) => (Some(pb), sb, "B"),
-        (None, None) => (None, 0, "—"),
-    };
-    let message = match &params {
-        Some(_) => format!("有效参数块（{block}，seq={seq}）"),
-        None => "未找到有效参数块（magic/CRC 不符）".to_string(),
-    };
-    Ok(LoadInfo {
-        found: params.is_some(),
-        block: block.to_string(),
-        seq,
-        crc_a: a.is_some(),
-        crc_b: b.is_some(),
-        params,
-        message,
-    })
-}
-
-/// Invalidate both blocks by wiping the magic (8 byte writes instead of 224).
-pub fn erase(link: &Link) -> Result<usize> {
-    enable_i2c_pins(link)?;
-    init_i2c(link, 100_000)?;
-    reject_new_layout(link)?;
-    let mut n = 0;
-    for base in [BLOCK_A, BLOCK_B] {
-        for i in 0..4 {
-            write_byte(link, base + i, 0xFF)?;
-            n += 1;
-        }
-    }
-    link.log("warn", "storage", "EEPROM 参数块已作废（magic 清空）");
-    Ok(n)
-}
+pub fn load(_link: &Link) -> Result<LoadInfo> {Err(retired_archive())}
+pub fn erase(_link: &Link) -> Result<usize> {Err(retired_archive())}
 
 /// The old B block and scratch overlap MTR1 slot B. Refuse legacy mutations
 /// even when the new record has an invalid commit marker (interrupted save).
@@ -502,42 +281,13 @@ fn reject_new_layout(link: &Link) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn unverified_backend_rejects_before_transport_or_pin_changes() {
-        let link = Link::new();
-        for error in [probe(&link).err(), dump(&link).err(),
-                      save(&link, &StoreParams::default()).err(), load(&link).err(),
-                      erase(&link).err(), read_bytes(&link,0,256).err(),
-                      write_bytes(&link,0,&[1,2]).err()] {
-            assert!(matches!(error, Some(LinkError::ValueError(ref text)) if text.contains("字节访问后端尚未验证")));
+    fn retired_archives_reject_without_device_io() {
+        let link=Link::new();
+        for e in [save(&link,&StoreParams::default()).err(),load(&link).err(),erase(&link).err()] {
+            assert!(matches!(e,Some(LinkError::ValueError(ref text)) if text.contains("RUN2")));
         }
     }
-
     #[test]
-    fn block_round_trips() {
-        let p = StoreParams::default();
-        let b = encode(&p, 7);
-        let (back, seq) = decode(&b).expect("decode");
-        assert_eq!(seq, 7);
-        assert_eq!(back, p);
-    }
-
-    #[test]
-    fn crc_rejects_corruption() {
-        let mut b = encode(&StoreParams::default(), 1);
-        b[HEADER_LEN + 3] ^= 0xFF;
-        assert!(decode(&b).is_none());
-    }
-
-    #[test]
-    fn erased_eeprom_is_not_valid() {
-        assert!(decode(&[0xFFu8; BLOCK_LEN]).is_none());
-    }
-
-    #[test]
-    fn blocks_fit_the_chip() {
-        assert!(BLOCK_B + BLOCK_LEN <= SCRATCH);
-        assert!(SCRATCH < EEPROM_LEN);
-    }
+    fn unverified_byte_backend_still_rejects() {assert!(require_byte_contract().is_err());}
 }

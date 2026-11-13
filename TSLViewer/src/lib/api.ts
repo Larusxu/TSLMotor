@@ -100,7 +100,7 @@ const real = {
   openReportsDir: () => invoke<void>("open_reports_dir"),
   suggestPi: (rOhm: number, lUh: number, bandwidthHz: number, fPwm: number) =>
     invoke<[number, number, number, number]>("suggest_pi", { rOhm, lUh, bandwidthHz, fPwm }),
-  readPid: () => invoke<PidSnapshot>("read_pid"),
+  readPid: (motor?:number) => invoke<PidSnapshot>("read_pid",{motor}),
   jobBusy: () => invoke<boolean>("job_busy"),
   cancelJob: () => invoke<void>("cancel_job"),
   runJob: (kind: string, payload: unknown) => invoke<void>("run_job", { kind, payload }),

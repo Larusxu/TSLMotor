@@ -356,6 +356,7 @@ export interface HomingConfig {
 
 /** 主控上报的找零状态。上位机只读，不推算、不覆盖。 */
 export interface HomingState {
+  complex?: boolean; pair_phase?: number; pair_repeats?: number; candidate_position?: number;
   /** 0 空闲 / 1 进行中 / 2 成功 / 3 失败 */
   stage: number;
   /** 行程零点有效；上电必清 */
@@ -364,7 +365,7 @@ export interface HomingState {
   iq_ma: number;
   /** 本次找零已用时，ms */
   elapsed_ms: number;
-  /** 错误码 0 无 / 1 超时 / 2 控制器故障 / 3 取消 / 4 断使能 / 5 编码器无效 / 6 未授权 */
+  /** 错误码 0 无 / 1 超时 / 2 控制器故障 / 3 取消 / 4 断使能 / 5 编码器无效 / 6 保留 */
   error: number;
   /** 主控给出的说明（可为空） */
   message: string;
@@ -375,6 +376,14 @@ export interface HomingState {
   negative_contact?: number;
   positive_contact?: number;
   travel_counts?: number;
+  adaptive?: boolean;
+  adaptive_phase?: number;
+  load_phase?: number;
+  sample_position?: number;
+  sample_velocity?: number;
+  sample_target?: number;
+  edge_score?: number;
+  park_position?: number;
 }
 
 export interface EepromLoad {

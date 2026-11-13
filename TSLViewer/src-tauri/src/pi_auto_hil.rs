@@ -57,7 +57,7 @@
         fn motion_wait(&mut self,seconds:u64,accept:impl Fn(&sc::MotorSnapshot)->bool)->Result<sc::MotorSnapshot,String>{
             let end=Instant::now()+Duration::from_secs(seconds);
             loop{thread::sleep(Duration::from_millis(100));self.call(0,Command::Pulse)?;
-                self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+
                 let r=self.call(9,Command::PositionState)?;let s=r.motor.ok_or("Missing motor state")?;
                 if s.fault!=0||s.last_error!=0{return Err(format!("Motion fault/error {s:?}"));}
                 if !r.pending&&s.pending_action==0&&accept(&s){return Ok(s);}
@@ -65,7 +65,7 @@
             }
         }
         fn center(&mut self)->Result<(),String>{
-            self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+
             let mut s=self.call(9,Command::PositionState)?.motor.ok_or("Missing position")?;
             if !s.coordinate_valid{
                 self.call(9,Command::HomingConfigRead)?;
@@ -109,7 +109,7 @@
                             cursor=u32::from_le_bytes(b[..4].try_into().unwrap());
                             if b[4..12].iter().any(|v|*v!=0){return Err("RTMI lost/error during bench".into());}
                             if tick.elapsed()>=Duration::from_millis(100){
-                                self.call(0,Command::Pulse)?;self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+                                self.call(0,Command::Pulse)?;
                                 let s=self.call(9,Command::PositionState)?.motor.ok_or("No feedback")?;
                                 if s.fault!=0||s.last_error!=0||!s.coordinate_valid{return Err(format!("Bench fault {s:?}"));}
                                 let pos=s.logical_position.as_ref().ok_or("Missing coordinate")?.parse::<i64>().map_err(|_|"Bad coordinate")?;
@@ -179,17 +179,17 @@
                 let profile=c.profile()?;let old_speed=u32::from_le_bytes(profile[112..116].try_into().unwrap());let old_mode=s.mode;
                 let run=(||->Result<(),String>{
                     for mode in 0..4 {
-                        c.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+
                         c.call(9,Command::TaskSpeed{velocity_raw:305419,mode})?;
                         c.motion_wait(15,|s|s.drive==0&&s.limits_valid)?;
                         c.call(9,Command::DriveEnable)?;c.motion_wait(15,|s|s.drive==2)?;
                         let repeat=c.call(9,Command::DriveEnable)?;
                         if repeat.pending||repeat.motor.as_ref().map(|s|s.drive)!=Some(2){return Err("Repeated enable was not idempotent".into());}
-                        c.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+
                         // A rejected task must not turn into a device fault or revoke authorization.
                         if c.call(9,Command::LogicalMove{position:"-1".into()}).is_ok(){return Err("Invalid target was accepted".into());}
                         let state=c.call(9,Command::GetState)?.motor.ok_or("Missing enabled state")?;
-                        if state.fault!=0||!state.permit||!state.logic_power||!state.align_valid{return Err(format!("Rejected task blocked the device: {state:?}"));}
+                        if state.fault!=0||!state.logic_power||!state.align_valid{return Err(format!("Rejected task blocked the device: {state:?}"));}
                         c.call(9,Command::Stop{after:2})?;c.motion_wait(15,|s|s.drive==0)?;
                         c.records.push(serde_json::json!({"readiness_mode":mode,"passed":true}));
                     }Ok(())
@@ -201,7 +201,7 @@
             }
             if action=="range_retry"{
                 if s.position.parse::<i64>().map_err(|_|"Bad position")?.abs()+5461<=9102{return Err("Test requires position outside PRBS envelope; no excitation sent".into());}
-                c.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+
                 c.call(9,Command::IdentStart{loop_id:3,amplitude:5461,duration_ms:5000,travel_counts:9102,sampling:None,excitation_sampling:None})?;
                 let end=Instant::now()+Duration::from_secs(5);
                 loop {
@@ -248,7 +248,7 @@
             let original_profile=if verify{Some(c.profile()?)}else{None};
             let loop_id=std::env::var("PI_AUTO_LOOP").ok().and_then(|v|v.parse().ok()).unwrap_or(0);
             let amplitude=std::env::var("PI_AUTO_AMPLITUDE").ok().and_then(|v|v.parse().ok()).unwrap_or(if loop_id<2{248}else{30542});
-            c.call(9,Command::Permit{enabled:true,lease_ms:if action=="disconnect"{1000}else{3000}})?;
+
             let before=c.call(9,Command::IdentState{cursor:0})?.identification.ok_or("No identification capability")?;
             let word=|b:&[u8],i:usize|u32::from_le_bytes(b[i..i+4].try_into().unwrap());
             let generation=word(&before,4);
@@ -281,7 +281,7 @@
             let end=Instant::now()+Duration::from_secs(20);let mut aborted=false;
             let capture=loop{
                 thread::sleep(Duration::from_millis(120));c.call(0,Command::Pulse)?;
-                if action!="disconnect"{c.call(9,Command::Permit{enabled:true,lease_ms:3000})?;}
+                if action!="disconnect"{}
                 let r=c.call(9,Command::IdentState{cursor:0})?;let b=r.identification.ok_or("Missing identification snapshot")?;
                 if !aborted&&(action=="abort"||(action=="abort_live"&&b[1]==1&&word(&b,8)>=20)){
                     c.call(9,Command::IdentAbort)?;aborted=true;
@@ -323,7 +323,7 @@
         let restored=if let Some((config,coefficients))=restore_pi {
             c.call(9,Command::PiTune{group:1,expected_config:config,coefficients}).and_then(|_|c.wait()).and_then(|_|{if c.live_pi()?==(config,coefficients){Ok(())}else{Err("Independent PI restore verification failed".into())}})
         }else{Ok(())};
-        let _=c.call(9,Command::Permit{enabled:false,lease_ms:0});let _=c.call(0,Command::Close);
+        let _=c.call(9,Command::DriveDisable);let _=c.call(0,Command::Close);
         std::fs::write(&c.path,serde_json::to_vec_pretty(&c.records).unwrap()).unwrap();
         assert!(restored.is_ok(),"Restore failed: {restored:?}");
         assert!(result.is_ok(),"{result:?}");
@@ -347,8 +347,8 @@
                 let m=v["motor"].as_u64().ok_or("motor")? as u8;
                 if let Some(q)=v.get("control") {
                     let op=q["op"].as_u64().ok_or("op")? as u8;
-                    if ![4,5].contains(&op){return Err("Only per-motor power/status bridge operations permitted".into());}
                     let data:Vec<u8>=serde_json::from_value(q["data"].clone()).map_err(|e|e.to_string())?;
+                    if ![4,5,13,16].contains(&op)&&!(op==34&&data==[0,1]){return Err("Only per-motor power/status, homing reads and cylinder snapshots permitted".into());}
                     return serde_json::to_value(wire.call(m,op,&data).map_err(|e|e.to_string())?).map_err(|e|e.to_string());
                 }
                 if let Some(q)=v.get("storage") {

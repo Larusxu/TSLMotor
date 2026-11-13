@@ -16,7 +16,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
  const apply=async(c,p,i)=>{const coeff=numeric.trialCoefficients(c.coefficients,loop,p,i,shared);changed=true;await h.wait(9,3000,r=>r.motor.drive===0&&r.motor.feedback_fresh);await h.command(9,{kind:'pi_tune',group:loop<2?0:loop===2?1:2,expected_config:c.pidConfig,coefficients:coeff});await h.wait(9,10000,r=>r.motor.drive===0);const back=await h.registers([0x140,0x142,0x143,0x145,0x146]);if(back[0]!==c.pidConfig||back.slice(1).some((v,k)=>v!==coeff[k]))throw Error('PI readback differs');};
  const restore=async()=>{if(!original||!changed)return;await h.wait(9,3000,r=>r.motor.drive===0&&r.motor.feedback_fresh);for(const group of [0,1,2]){await h.command(9,{kind:'pi_tune',group,expected_config:original[0],coefficients:original.slice(1)});await h.wait(9,10000,r=>r.motor.drive===0);}const back=await h.registers([0x140,0x142,0x143,0x145,0x146]);if(JSON.stringify(back)!==JSON.stringify(original))throw Error('Original PI restore failed');changed=false;};
  const capture=async()=>{
-  await h.command(9,{kind:'permit',enabled:true,lease_ms:3000});
+
   const prev=numeric.decodeCapture((await h.command(9,{kind:'ident_state',cursor:0})).identification);
   await h.command(9,{kind:'ident_start',loop_id:loop,amplitude,duration_ms:duration,travel_counts:travel,sampling,excitation_sampling:excitation});
   let c,end=Date.now()+duration+20000;

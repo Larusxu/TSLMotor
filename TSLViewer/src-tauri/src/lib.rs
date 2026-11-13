@@ -6,6 +6,7 @@
 
 mod gateway;
 mod firmware;
+mod pose_files;
 mod cylinder;
 mod axis;
 mod homing;
@@ -97,10 +98,8 @@ fn main_control(state: State<'_, AppState>, motor:u8, op:u8, data:Vec<u8>)->Resu
 
 #[tauri::command(async)]
 fn motor_storage(state: State<'_, AppState>, motor:u8, request:split_storage::Request)->Result<split_storage::Response,String> {
-      let passive=[1,6,7,9].contains(&request.operation);
-      if !passive && (state.busy.load(Ordering::SeqCst)||state.control.active.load(Ordering::SeqCst)) {
-          return Err("当前配置任务尚未结束，请稍后保存；读取配置不受影响".into());
-    }
+    // Flash/W25 jobs are serialized by the storage service. Motion ownership
+    // does not own either store; encoder ROM access is checked by firmware.
     let payload=split_storage::encode(motor,&request)?;
     let reply=state.link.gateway_control(motor,33,&payload).map_err(|e|e.to_string())?;
     split_storage::decode(motor,&request,&reply)
@@ -410,9 +409,9 @@ fn suggest_pi(r_ohm: f64, l_uh: f64, bandwidth_hz: f64, f_pwm: f64) -> (u16, u16
 }
 
 #[tauri::command(async)]
-fn read_pid(state: State<'_, AppState>) -> Result<procs::PidSnapshot, String> {
+fn read_pid(state: State<'_, AppState>,motor:Option<u8>) -> Result<procs::PidSnapshot, String> {
     if state.busy.swap(true,Ordering::SeqCst) {return Err("先停止当前任务，再读取PID档案".into());}
-    let result=(||{state.link.stop_rtmi()?;procs::read_pid(&state.link).map_err(|e| e.to_string())})();
+    let result=(||{state.link.stop_rtmi()?;procs::read_pid_for(&state.link,motor.unwrap_or_else(||state.link.focused_motor())).map_err(|e| e.to_string())})();
     state.busy.store(false,Ordering::SeqCst);result
 }
 
@@ -743,6 +742,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             firmware::firmware_start,
             firmware::firmware_status,
+            pose_files::save_pose_file,
             main_control,
             cylinder_control,
             motor_semantic,

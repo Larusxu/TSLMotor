@@ -31,7 +31,7 @@ try{
  const {semanticMotion}=await import(lib('semantic-motion'));motion=semanticMotion;
  const {piAuto}=await import(lib('pi-auto/service'));service=piAuto;
  const {readMotorProfile,pidFromProfile,tuneMotorPi}=await import(lib('motor-profile-ui'));
- await motion.open(9);await motion.permit(9,true);
+ await motion.open(9);
  profile=(await readMotorProfile(9)).data;
  original=await service.livePi(9);
  if(process.env.PI_SEED){const seed=JSON.parse(process.env.PI_SEED),p=pidFromProfile(profile);
@@ -83,5 +83,5 @@ finally{
    if(finalState.fault||!finalState.logic_power||!finalState.align_valid)throw Error('Final state is not reusable');
   }
  }catch(e){console.error('Cleanup failed:',e.message);process.exitCode=1;}
- finally{try{if(motion){await motion.permit(9,false);await motion.close();}}finally{await h.close();}}
+ finally{try{if(motion){await motion.command(9,{kind:"drive_disable"});await motion.close();}}finally{await h.close();}}
 }

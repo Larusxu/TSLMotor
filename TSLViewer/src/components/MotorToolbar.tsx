@@ -17,8 +17,6 @@ export default function MotorToolbar() {
       disabled={app.busy || app.jobRunning || app.motionActive || app.acquiring}
       options={Array.from({ length: 16 }, (_, i) => ({ value: i + 1, label: `M${i + 1}` }))}/>
     <MotorEnable/>
-    {app.mode !== "direct" && <Button disabled={!app.connected || busy || app.acquiring || !s?.config_verified}
-      onClick={() => void run(() => semanticMotion.permit(app.motor, !s?.permit))}>{s?.permit ? "取消运动授权" : "开启运动授权"}</Button>}
     <Button disabled={!app.connected || busy} icon={<Icon.Stop width={14} height={14}/>}
       onClick={() => void run(() => app.mode === "direct" ? api.stopMotion(app.cal.poles) : semanticMotion.stop(app.motor))}>停止运行</Button>
     <Button disabled={!app.connected || busy} onClick={()=>void run(()=>semanticMotion.clearFault(app.motor))}>清除故障</Button>

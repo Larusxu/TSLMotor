@@ -19,10 +19,10 @@ mod tests {
             Ok(r)
         }
         fn wait(&mut self,seconds:u64,mut accept:impl FnMut(&sc::MotorSnapshot)->bool)->Result<sc::MotorSnapshot,String>{
-            self.wait_with_permit(seconds,true,&mut accept)
+            self.wait_state(seconds,&mut accept)
         }
         fn wait_idle(&mut self,seconds:u64,mut accept:impl FnMut(&sc::MotorSnapshot)->bool)->Result<sc::MotorSnapshot,String>{
-            self.wait_with_permit(seconds,false,&mut accept)
+            self.wait_state(seconds,&mut accept)
         }
         fn wait_configuration(&mut self)->Result<sc::MotorSnapshot,String>{
             let end=Instant::now()+Duration::from_secs(30);
@@ -34,11 +34,10 @@ mod tests {
                 if Instant::now()>=end{return Err("Configuration completion timeout".into());}
             }
         }
-        fn wait_with_permit(&mut self,seconds:u64,permit:bool,mut accept:impl FnMut(&sc::MotorSnapshot)->bool)->Result<sc::MotorSnapshot,String>{
+        fn wait_state(&mut self,seconds:u64,mut accept:impl FnMut(&sc::MotorSnapshot)->bool)->Result<sc::MotorSnapshot,String>{
             let end=Instant::now()+Duration::from_secs(seconds);
             loop {
                 thread::sleep(Duration::from_millis(100));self.call(0,Command::Pulse)?;
-                if permit{self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;}
                 let r=self.call(9,Command::PositionState)?;let s=r.motor.ok_or("No motor snapshot")?;
                 if s.fault!=0||(s.last_error!=0&&s.last_error!=15){return Err(format!("fault={} error={}",s.fault,s.last_error));}
                 if accept(&s){return Ok(s);}if Instant::now()>=end{return Err("HIL wait deadline".into());}
@@ -52,7 +51,7 @@ mod tests {
                s.fault!=0||s.last_error!=0||s.drive!=0||s.motion_active||position<span/4||position>span*3/4 {
                 return Err("Jog preflight requires healthy disabled motor near mid travel".into());
             }
-            self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+
             let jog_velocity=std::env::var("MOTO_JOG_VELOCITY").ok().and_then(|x|x.parse::<i32>().ok()).unwrap_or(152709);
             if jog_velocity<305||jog_velocity>610839{return Err("Jog speed outside 1..2000rpm bench envelope".into());}
             let acceleration=std::env::var("MOTO_JOG_ACCEL").ok().and_then(|x|x.parse::<u32>().ok()).unwrap_or(667);
@@ -67,7 +66,7 @@ mod tests {
             // Short tests do not insert telemetry requests ahead of STOP.
             for hold_ms in [5000u64,500,200,100,50] {
               for direction in [1,-1] {
-                self.call(0,Command::Pulse)?;self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+                self.call(0,Command::Pulse)?;
                 let before=self.call(9,Command::PositionState)?.motor.ok_or("No jog preflight")?;
                 let origin=before.position.parse::<i64>().map_err(|_|"Bad jog origin")?;
                 let q=before.logical_position.as_ref().ok_or("No coordinate")?.parse::<i64>().map_err(|_|"Bad coordinate")?;
@@ -79,7 +78,7 @@ mod tests {
                 while started.elapsed()<Duration::from_millis(hold_ms) {
                     thread::sleep(Duration::from_millis(5));
                     if renew.elapsed()>=Duration::from_millis(200) {
-                        self.call(0,Command::Pulse)?;self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+                        self.call(0,Command::Pulse)?;
                         self.call(9,Command::JogRenew)?;
                         let r=self.call(9,Command::PositionState)?.motor.ok_or("No jog feedback")?;
                         if r.fault!=0||r.last_error!=0||!r.feedback_fresh{return Err(format!("Bad jog sample: {r:?}"));}
@@ -163,7 +162,7 @@ mod tests {
             let end=Instant::now()+Duration::from_secs(seconds);let mut heartbeat=Instant::now();let mut cursor=0;
             while Instant::now()<end {
                 if heartbeat.elapsed()>Duration::from_millis(150){
-                    self.call(0,Command::Pulse)?;self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+                    self.call(0,Command::Pulse)?;
                     if jog {self.call(9,Command::JogRenew)?;}
                     let m=self.call(9,Command::PositionState)?.motor.ok_or("No trace state")?;
                     if m.fault!=0{return Err(format!("Trace fault {m:?}"));}
@@ -188,7 +187,7 @@ mod tests {
                 self.call(9,Command::Commission{action:1})?;
                 self.wait_idle(30,|s|s.drive==0&&s.config_verified&&s.limits_valid)?;
             }
-            self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+
             let ready=self.call(9,Command::PositionState)?.motor.ok_or("No calibrated M9")?;
             if !ready.align_valid{return Err("Stored encoder calibration must be valid".into());}
             let home=if ready.coordinate_valid{ready}else{
@@ -231,14 +230,14 @@ mod tests {
                         .and_then(|s|s.parse::<usize>().ok()).unwrap_or(3).clamp(1,20);
                     for _ in 0..renewals {
                         thread::sleep(Duration::from_millis(80));self.call(0,Command::Pulse)?;
-                        self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;self.call(9,Command::JogRenew)?;
+                        self.call(9,Command::JogRenew)?;
                     }
                     let release=self.call(9,Command::Stop{after:1})?;
                     self.log.push(serde_json::json!({"coast_trial":index,"mode":mode,"rpm":rpm,"direction":direction,
                         "stop_ack_ms":release.timestamp_ms,"origin":origin}));
                     self.overshoot_trace("jog_release",4,false)?;
                     let held=self.wait(12,|s|!s.motion_active&&s.pending_action==0)?;
-                    if !held.logic_power||!held.align_valid||!held.coordinate_valid||held.drive!=2||held.mode!=mode||!held.permit {
+                    if !held.logic_power||!held.align_valid||!held.coordinate_valid||held.drive!=2||held.mode!=mode {
                         return Err(format!("Coast lost power/calibration/mode/hold: {held:?}"));
                     }
                     self.log.push(serde_json::json!({"coast_trial_done":index,"held":held}));
@@ -278,7 +277,7 @@ mod tests {
                     self.call(0,Command::Pulse)?;thread::sleep(Duration::from_millis(100));}
             } else if state.last_error!=0 {self.call(9,Command::ClearFault)?;}
             if !state.config_verified {self.call(9,Command::Commission{action:1})?;self.wait_idle(30,|s|s.drive==0&&s.config_verified&&s.limits_valid)?;}
-            self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+
             let state=self.call(9,Command::PositionState)?.motor.ok_or("No ready state")?;
             if !state.align_valid{return Err("Existing calibration required".into());}
             let home=if state.coordinate_valid{state}else{
@@ -316,7 +315,7 @@ mod tests {
                 // Test the configured task speed, never substitute the stall-detection threshold.
                 for _ in 0..5 {
                     thread::sleep(Duration::from_millis(80));self.call(0,Command::Pulse)?;
-                    self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;self.call(9,Command::JogRenew)?;
+                    self.call(9,Command::JogRenew)?;
                 }
                 self.call(9,Command::Stop{after:1})?;
                 self.overshoot_trace("jog_release",4,false)?;
@@ -349,7 +348,7 @@ mod tests {
                 self.call(9,Command::Commission{action:1})?;
                 self.wait_idle(30,|s|s.drive==0&&s.config_verified&&s.limits_valid)?;
             }
-            self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+
             let state=self.call(9,Command::PositionState)?.motor.ok_or("No initialized state")?;
             if !state.align_valid{return Err("Existing calibration required".into());}
             let home=if state.coordinate_valid {state} else {
@@ -369,7 +368,7 @@ mod tests {
             let sign=if chip-negative<span/2{1}else{-1};
             self.call(9,Command::JogStart{velocity_raw:sign*610839,lease_ms:1000})?;
             thread::sleep(Duration::from_millis(120));
-            self.call(0,Command::Pulse)?;self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+            self.call(0,Command::Pulse)?;
             self.call(9,Command::JogRenew)?;
             let during=self.archive(9,1,0,None)?.data;
             if during!=base{return Err("Moving W25 read differs".into());}
@@ -382,22 +381,22 @@ mod tests {
             let end=Instant::now()+Duration::from_secs(15);
             loop {
                 thread::sleep(Duration::from_millis(80));
-                self.call(0,Command::Pulse)?;self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+                self.call(0,Command::Pulse)?;
                 self.call(9,Command::JogRenew)?;
                 let r=self.call(9,Command::PositionState)?;let state=r.motor.ok_or("No online snapshot")?;
-                if state.fault!=0||state.last_error!=0||state.drive!=2||!state.motion_active||!state.permit||!state.align_valid||!state.span_valid||!state.logic_power {
+                if state.fault!=0||state.last_error!=0||state.drive!=2||!state.motion_active||!state.align_valid||!state.span_valid||!state.logic_power {
                     return Err(format!("Online update disturbed running motor: {state:?}"));
                 }
                 if !r.pending&&state.pending_action==0{break;}
                 if Instant::now()>end{return Err("Online apply deadline".into());}
             }
-            self.log.push(serde_json::json!({"running_w25_read_write":true,"running_apply_kept_pwm_task_permit_home":true}));
+            self.log.push(serde_json::json!({"running_w25_read_write":true,"running_apply_kept_pwm_task_home":true}));
             self.call(9,Command::Stop{after:1})?;
             let stop_end=Instant::now()+Duration::from_secs(15);
             let mut last=None;let mut reverse=0i64;
             loop {
                 thread::sleep(Duration::from_millis(40));
-                self.call(0,Command::Pulse)?;self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+                self.call(0,Command::Pulse)?;
                 let r=self.call(9,Command::PositionState)?.motor.ok_or("No stop trace")?;
                 let pos=r.position.parse::<i64>().map_err(|_|"Bad stop trace")?;
                 if let Some(old)=last {reverse=reverse.max((old-pos)*i64::from(sign));}last=Some(pos);
@@ -410,7 +409,7 @@ mod tests {
             let saved=self.archive(9,1,0,None)?.data;
             if saved!=base{return Err("Archive changed unexpectedly".into());}
             self.call(9,Command::Stop{after:2})?;self.wait(15,|s|s.drive==0&&!s.motion_active)?;
-            self.call(9,Command::Permit{enabled:false,lease_ms:0})?;
+            self.call(9,Command::DriveDisable)?;
             self.log.push(serde_json::json!({"contact_online_pass":true,"archive_unchanged":true}));
             self.call(0,Command::Close)?;Ok(())
         }
@@ -429,25 +428,26 @@ mod tests {
             }
             let state=self.call(9,Command::PositionState)?.motor.ok_or("Missing configured M9")?;
             if !state.align_valid{return Err("Calibration must already be valid".into());}
-            self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+
             // Apply byte-identical saved settings: no invented PI/speed/current.
-            // Observe every intermediate state BEFORE renewing the permission.
+            // Observe every intermediate state during configuration.
             let mut payload=base[120..124].to_vec();payload.extend_from_slice(&base[28..64]);payload.extend_from_slice(&base[68..120]);
             self.call(9,Command::ApplyConfiguration{payload})?;
             let until=Instant::now()+Duration::from_secs(30);
             loop {
                 thread::sleep(Duration::from_millis(100));self.call(0,Command::Pulse)?;
                 let r=self.call(9,Command::PositionState)?.motor.ok_or("Missing apply state")?;
-                if r.fault!=0||r.last_error!=0||!r.permit{return Err(format!("Apply lost permission or failed: {r:?}"));}
-                self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+                if r.fault!=0||r.last_error!=0{return Err(format!("Apply failed: {r:?}"));}
+
                 if r.drive==0&&r.config_verified&&r.limits_valid&&r.pending_action==0{break;}
                 if Instant::now()>until{return Err("Apply deadline".into());}
             }
             let applied_archive=self.archive(9,1,0,None)?.data;
             if applied_archive!=base{return Err("Applied archive differs from original".into());}
             let applied_state=self.call(9,Command::PositionState)?.motor.ok_or("No post-read state")?;
-            if !applied_state.permit{return Err("Independent W25 read lost permission".into());}
-            self.log.push(serde_json::json!({"apply_kept_permission":true,"independent_readback_kept_permission":true}));
+            if applied_state.fault!=0||!applied_state.config_verified{return Err("Post-read configuration invalid".into());}
+
+            self.log.push(serde_json::json!({"apply_kept_configuration":true,"independent_readback_kept_configuration":true}));
             let state=self.call(9,Command::PositionState)?.motor.ok_or("Missing home preflight")?;
             let home=if state.coordinate_valid&&state.span_valid {state} else {
                 self.call(9,Command::HomingStart{direction:1,step_unit:100,dual:true})?;
@@ -533,7 +533,7 @@ mod tests {
             if saved[12..120]!=image[12..120]{return Err("RUN2 archive apply readback differs".into());}
             // Do not overwrite shared homing policy as a side effect of mode tests.
             if u32::from(cfg[4])>word(&common,36){return Err("Saved homing rpm exceeds common safety limit; shared policy was not changed".into());}
-            self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+
             let home=if initial.coordinate_valid&&initial.span_valid {
                 self.call(9,Command::PositionState)?.motor.ok_or("No existing coordinate")?
             }else{
@@ -582,7 +582,7 @@ mod tests {
                     let start=Instant::now();let mut peak=0i32;
                     while start.elapsed()<Duration::from_millis(500){
                         thread::sleep(Duration::from_millis(100));self.call(0,Command::Pulse)?;
-                        self.call(9,Command::Permit{enabled:true,lease_ms:3000})?;self.call(9,Command::JogRenew)?;
+                        self.call(9,Command::JogRenew)?;
                         let r=self.call(9,Command::PositionState)?.motor.ok_or("No velocity sample")?;
                         if r.fault!=0||r.last_error!=0{return Err("Velocity task fault".into());}
                         peak=peak.max(r.velocity_raw.abs());
@@ -608,7 +608,7 @@ mod tests {
             for mode in [1u8,2,0,3,1,0,2,3,0,1,3,2,1,0] {set_mode(self,mode)?;}
             self.call(9,Command::Stop{after:2})?;
             self.wait_idle(10,|s|s.drive==0&&!s.motion_active&&s.pending_action==0)?;
-            self.call(9,Command::Permit{enabled:false,lease_ms:0})?;
+            self.call(9,Command::DriveDisable)?;
             let after=self.archive(9,1,0,None)?.data;
             if after!=saved{return Err("RAM mode/target tasks modified W25 archive".into());}
             let current_cfg=self.call(9,Command::HomingConfigRead)?.homing_config;
@@ -634,7 +634,7 @@ mod tests {
         }
         if scenario=="passive_watch" {
             // Zero-session discovery may coexist with the other transport's
-            // controller. Never OPEN/PULSE/PERMIT, write a register, or STOP it.
+            // controller. Never OPEN/PULSE, write a register, or STOP it.
             for _ in 0..40 {
                 h.q.boot_id="0".into();h.q.session_id=0;h.q.task_id=0;
                 h.call(0,Command::GetState).unwrap();
@@ -704,11 +704,11 @@ mod tests {
                 let policy=h.call(9,Command::HomingConfigRead)?.homing_config.ok_or("No home policy")?;
                 h.log.push(serde_json::json!({"unchanged_homing_policy":policy}));
                 if !initial.span_valid {
-                    h.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+
                     h.call(9,Command::HomingStart{direction:1,step_unit:100,dual:true})?;
                     h.wait(160,|s|s.drive==0&&s.span_valid&&s.config_verified&&s.feedback_fresh)?;
                 }
-                h.call(9,Command::Permit{enabled:false,lease_ms:0})?;
+                h.call(9,Command::DriveDisable)?;
                 h.wait_idle(15,|s|s.drive==0&&!s.motion_active)?;
                 return Ok(());
             }
@@ -798,10 +798,10 @@ mod tests {
                 if !after.logic_power||!after.config_verified||after.align_valid!=before.align_valid||
                     after.span_valid!=before.span_valid{return Err("Policy edit invalidated motor state".into());}
                 h.call(0,Command::Close)?;
-                // No semantic pulse / permit / motion for more than the lease.
+                // No semantic pulse / motion for more than the lease.
                 thread::sleep(Duration::from_secs(4));
                 let closed=h.call(9,Command::GetState)?.motor.ok_or("No closed state")?;
-                if !closed.logic_power||!closed.config_verified||closed.drive!=0||closed.motion_active||closed.permit||closed.fault!=0 {
+                if !closed.logic_power||!closed.config_verified||closed.drive!=0||closed.motion_active||closed.fault!=0 {
                     return Err(format!("Disconnect failed to preserve TMC power: {closed:?}"));
                 }
                 h.log.push(serde_json::json!({"board_policy":true,"maximum_rpm":28730,"motor_archives_unchanged":16,
@@ -851,7 +851,7 @@ mod tests {
                     h.call(0,Command::Pulse)?;let r=h.call(9,Command::GetState)?;
                     let s=r.motor.ok_or("No recovery snapshot")?;
                     if !r.pending&&s.drive!=1&&s.pending_action==0 {
-                        if s.fault!=0||s.last_error!=0||s.permit||s.drive!=0||!s.logic_power||!s.config_verified||!s.align_valid {
+                        if s.fault!=0||s.last_error!=0||s.drive!=0||!s.logic_power||!s.config_verified||!s.align_valid {
                             return Err(format!("Recovery not verified: {s:?}"));}
                         if s.align_valid!=before.align_valid||s.span_valid!=before.span_valid||
                            s.home_neg_valid!=before.home_neg_valid||s.home_pos_valid!=before.home_pos_valid||
@@ -903,7 +903,7 @@ mod tests {
             if scenario=="apply_idle" {
                 h.call(9,Command::Commission{action:1})?;
                 h.wait_idle(20,|s|s.drive==0&&s.config_verified&&s.limits_valid)?;
-                h.call(9,Command::Permit{enabled:false,lease_ms:0})?;
+                h.call(9,Command::DriveDisable)?;
                 let original=h.storage(1,0x791001)?;
                 let snapshot=h.call(9,Command::GetState)?.motor.ok_or("No original state")?;
                 let mut rejected=original.data[120..124].to_vec();
@@ -948,7 +948,7 @@ mod tests {
                 h.call(9,Command::GetState)?;
                 h.call(9,Command::Commission{action:1})?;
                 let v=h.wait_idle(20,|s|s.drive==0&&s.config_verified&&s.limits_valid)?;
-                if !v.logic_power||v.motion_active||v.permit{return Err(format!("Unexpected enable-entry state: {v:?}"));}
+                if !v.logic_power||v.motion_active{return Err(format!("Unexpected enable-entry state: {v:?}"));}
                 h.log.push(serde_json::json!({"enable_entry_verified":true,"motion_sent":false,"state":v}));
                 std::fs::write(&h.path,serde_json::to_vec_pretty(&h.log).unwrap()).map_err(|e|e.to_string())?;
                 return Ok(());
@@ -956,12 +956,12 @@ mod tests {
             if scenario=="rtmi_dump" {h.call(9,Command::GetState)?;h.call(9,Command::RtmiState{cursor:0})?;return Ok(());}
             if scenario=="rtmi_preflight" {
                 let v=h.call(9,Command::GetState)?.motor.ok_or("No M9 state")?;
-                if v.drive!=0||v.motion_active||v.permit||v.velocity_raw.abs()>1000||v.fault!=0{return Err(format!("Not safely idle: {v:?}"));}
+                if v.drive!=0||v.motion_active||v.velocity_raw.abs()>1000||v.fault!=0{return Err(format!("Not safely idle: {v:?}"));}
                 return Ok(());
             }
             if scenario=="rtmi" {
                 let v=h.call(9,Command::GetState)?.motor.ok_or("No M9 state")?;
-                if v.drive!=0||v.motion_active||v.permit||v.fault!=0{return Err("RTMI requires disabled M9".into());}
+                if v.drive!=0||v.motion_active||v.fault!=0{return Err("RTMI requires disabled M9".into());}
                 let archive=h.storage(1,0x770001)?;
                 h.call(9,Command::Commission{action:1})?;
                 h.wait_idle(20,|s|s.drive==0&&s.config_verified&&s.limits_valid)?;
@@ -1031,7 +1031,7 @@ mod tests {
                 let before=h.storage(1,0x750001)?;
                 h.call(9,Command::Commission{action:1})?;
                 let applied=h.wait(20,|s|s.drive==0&&s.config_verified&&s.limits_valid&&s.pending_action==0)?;
-                h.call(9,Command::Permit{enabled:false,lease_ms:0})?;
+                h.call(9,Command::DriveDisable)?;
                 let after=h.storage(1,0x750002)?;
                 if before.data!=after.data||before.generation!=after.generation {return Err("Initialization changed tuned archive".into());}
                 let iq=u32::from_le_bytes(before.data[48..52].try_into().unwrap())>>16;
@@ -1042,7 +1042,7 @@ mod tests {
                 return Ok(());
             }
             if scenario=="pi_calibration" {
-                h.call(9,Command::Permit{enabled:false,lease_ms:0})?;
+                h.call(9,Command::DriveDisable)?;
                 let before=h.storage(1,0x760001)?;
                 h.call(9,Command::Commission{action:1})?;
                 let initial=h.wait_idle(30,|s|s.drive==0&&s.config_verified&&s.limits_valid)?;
@@ -1082,17 +1082,18 @@ mod tests {
             h.call(9,Command::Commission{action:1})?;
             h.wait(15,|s|s.drive==0&&s.config_verified)?;
             if scenario=="configuration" {
-                h.call(9,Command::Permit{enabled:false,lease_ms:0})?;
+                h.call(9,Command::DriveDisable)?;
                 let before=h.storage(1,0x740001)?;
                 let mut profile=crate::motor_profile::Profile::decode(&before.data,9,9,
                     u32::from_le_bytes(before.data[64..68].try_into().unwrap())).map_err(|e|format!("{e:?}"))?;
                 profile.words[7]=(2483u32<<16)|(profile.words[7]&65535);
                 profile.words[8]=610839;
-                profile.run=[0x314e5552,667,667,2980,180,60,1000,5000,65536,1,2,0,1];
+                profile.words[10]=8774555;
+                profile.run=[0x324e5552,667,667,2980,180,60,1000,5000,65536,1,2,610839,1];
                 let expected=profile.encode().map_err(|e|format!("{e:?}"))?;
                 h.archive(9,3,0x740002,Some(&expected))?;
                 let after=h.storage(1,0x740003)?;
-                if after.data[12..120]!=expected[12..120]{return Err("W25 RUN1 readback mismatch".into());}
+                if after.data[12..120]!=expected[12..120]{return Err("W25 RUN2 readback mismatch".into());}
                 h.call(9,Command::Commission{action:1})?;
                 let applied=h.wait(20,|s|s.config_verified&&s.limits_valid&&s.drive==0&&s.pending_action==0)?;
                 if applied.effective_iq_raw!=2483||applied.effective_velocity_raw!=610839||applied.mode!=1||!applied.logic_power {
@@ -1103,7 +1104,7 @@ mod tests {
                 return Ok(());
             }
             if scenario=="partition" {
-                h.call(9,Command::Permit{enabled:false,lease_ms:0})?;
+                h.call(9,Command::DriveDisable)?;
                 let common=h.archive(0,1,0x720001,None)?;
                 let motor=h.storage(1,0x720002)?;
                 let migrated=h.archive(0,3,0x720003,Some(&common.data))?;
@@ -1127,7 +1128,7 @@ mod tests {
                 return Ok(());
             }
             if scenario=="storage" {
-                h.call(9,Command::Permit{enabled:false,lease_ms:0})?;
+                h.call(9,Command::DriveDisable)?;
                 let saved=h.storage(1,0x710001)?;
                 let backup=h.storage(5,0x710002)?;
                 let read=h.storage(4,0x710003)?;
@@ -1137,7 +1138,7 @@ mod tests {
                 if offset!=decoded_offset{return Err("W25/M24 offset differs".into());}
                 return Ok(());
             }
-            h.call(9,Command::Permit{enabled:true,lease_ms:3000})?;
+
             // Explicit RAM configuration commit/readback, then independent start.
             let cfg=[400,1050,50,500,2000,360,2000,60];
             let written=h.call(9,Command::HomingConfigWrite{config:cfg})?;
@@ -1208,7 +1209,7 @@ mod tests {
                 h.call(9,Command::Mode{mode:1})?;
                 h.wait(15,|s|s.mode==1&&s.limits_valid&&s.pending_action==0)?;
                 h.call(9,Command::DriveEnable)?;h.wait(15,|s|s.drive==2)?;
-                // Renew session/permit only: the distinct jog lease must expire.
+                // Poll state only: the distinct jog lease must expire.
                 h.call(9,Command::JogStart{velocity_raw:6108,lease_ms:500})?;
                 h.wait(10,|s|!s.motion_active&&s.pending_action==0&&s.mode==0)?;
                 h.call(9,Command::Stop{after:2})?;
@@ -1220,14 +1221,14 @@ mod tests {
                 // No host packets at all: MCU must expire the session itself.
                 thread::sleep(Duration::from_secs(4));
                 let s=h.call(9,Command::GetState)?.motor.ok_or("No post-disconnect snapshot")?;
-                if s.drive!=0||s.motion_active||s.permit||s.fault!=0 {
+                if s.drive!=0||s.motion_active||s.fault!=0 {
                     return Err(format!("Disconnect did not safely disable: {s:?}"));
                 }
             }
             Ok(())
         })();
-        let _=h.call(9,Command::Permit{enabled:false,lease_ms:0});let _=h.call(0,Command::Close);
-        // Close/permit revoke stop through the MCU. An assertion deadline alone
+        let _=h.call(9,Command::DriveDisable);let _=h.call(0,Command::Close);
+        // Explicit drive disable stops through the MCU. An assertion deadline alone
         // is not an electrical emergency; do not cut MAX20087 logic power here.
         // MCU fault handling still owns the emergency power-off fallback.
         assert!(result.is_ok(),"{result:?}");

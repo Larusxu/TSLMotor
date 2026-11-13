@@ -13,7 +13,6 @@ const snapshot=(extra={})=>({boot_id:'123',pending:false,motor:{drive:2,pending_
 {const s=new SemanticMotion();s.open=async()=>{};let count=0;s.call=async(m,c)=>{if(c.kind==='jog_start'){count++;throw Error('BUSY');}return m===0?{device:{stopping:false}}:snapshot();};await assert.rejects(s.command(9,{kind:'jog_start'}),/BUSY/);assert.equal(count,1);}
 {const s=new SemanticMotion();s.open=async()=>{};let submitted=false;s.call=async(m,c)=>{if(c.kind==='rtmi_config')submitted=true;return m===0?{device:{stopping:false}}:snapshot({drive:0,last_error:submitted?0:13});};await s.configureRtmi(9,{kind:'rtmi_config',enabled:true});assert(submitted,'historical last_error must not block a new idle request');}
 console.log('PASS stop barrier, release cancellation, pending, RTMI gate-off, moving rejection, historical error recovery and no replay');
-{const s=new SemanticMotion();s.command=async()=>snapshot({last_error:15,fault:0,permit:true,drive:2});const r=await s.wait(9,1000,()=>true);assert.equal(r.motor.permit,true);}
-{const s=new SemanticMotion();s.session=1;s.motor=9;s.permitWanted=true;s.pulseAt=s.permitAt=Date.now();s.call=async()=>snapshot({last_error:15,fault:0,permit:true});await s.tick();assert.equal(s.permitWanted,true);}
-{const s=new SemanticMotion();s.session=1;s.motor=9;s.permitWanted=true;s.pulseAt=s.permitAt=Date.now();s.call=async()=>snapshot({fault:32,permit:false});await s.tick();assert.equal(s.permitWanted,false);}
-console.log('PASS travel notice does not block waits or revoke permit; real IO fault still blocks');
+{const s=new SemanticMotion();s.command=async()=>snapshot({last_error:15,fault:0,drive:2});const r=await s.wait(9,1000,()=>true);assert.equal(r.motor.drive,2);}
+{const s=new SemanticMotion();s.command=async()=>snapshot({fault:32});await assert.rejects(s.wait(9,1000,()=>true));}
+console.log('PASS travel notice permits subsequent tasks; real IO fault still blocks');

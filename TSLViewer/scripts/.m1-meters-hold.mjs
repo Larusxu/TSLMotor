@@ -7,7 +7,7 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 try {
  original=(await h.command(1,{kind:'position_state'})).motor;
  if(original.motion_active||!original.align_valid)throw Error('Requires calibrated idle M1');
- await h.command(1,{kind:'permit',enabled:true,lease_ms:3000});
+
  if(original.last_error){await h.command(1,{kind:'commission',action:1});await h.wait(1,15000,r=>r.motor.drive===0);}
  const pi=backup.pi;
  for(const group of [0,1,2]){await h.command(1,{kind:'pi_tune',group,expected_config:pi[0],coefficients:pi.slice(1)});await h.wait(1,10000,r=>r.motor.drive===0);}

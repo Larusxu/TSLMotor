@@ -28,7 +28,7 @@ export async function hardware(report,{managed=true}={}) {
  };
  if(managed){const first=await command(0,{kind:'get_state'});boot=first.boot_id;seq=first.device.request_floor+1;session=0x50491105;await command(0,{kind:'open'});}
  let busy=false;
- const pulse=managed?setInterval(async()=>{if(busy)return;busy=true;try{await command(0,{kind:'pulse'});await command(1,{kind:'permit',enabled:true,lease_ms:3000});}catch(e){console.error('Heartbeat',String(e));}finally{busy=false;}},500):null;
+ const pulse=managed?setInterval(async()=>{if(busy)return;busy=true;try{await command(0,{kind:'pulse'});}catch(e){console.error('Heartbeat',String(e));}finally{busy=false;}},500):null;
  const wait=async(motor,timeout,accept)=>{const end=Date.now()+timeout;for(;;){await new Promise(r=>setTimeout(r,60));const r=await command(motor,{kind:'get_state'});if(!r.pending&&!r.motor?.pending_action&&(r.motor?.fault||r.motor?.last_error))throw Error(`Motor fault ${JSON.stringify(r.motor)}`);if(!r.pending&&!r.motor?.pending_action&&r.motor?.drive!==1&&accept(r))return r;if(Date.now()>end)throw Error('Motor wait timeout');}};
  const registers=async addresses=>{
   await command(1,{kind:'rtmi_config',enabled:true,sampling:255,addresses:[...addresses,...Array(7-addresses.length).fill(65535)],decimation:4});await wait(1,10000,r=>r.motor.drive===0);
@@ -51,7 +51,7 @@ export async function hardware(report,{managed=true}={}) {
     try{await command(1,{kind:'ident_abort'});}catch(e){console.error('Cleanup abort',String(e));}
     try{const state=await command(1,{kind:'get_state'});if(state.pending||state.motor?.pending_action||state.motor?.drive!==0||state.motor?.motion_active){await command(1,{kind:'stop',after:2});await wait(1,15000,r=>r.motor.drive===0&&!r.motor.motion_active);}}catch(e){console.error('Cleanup stop',String(e));}
     clearInterval(pulse);await chain;
-    await command(1,{kind:'permit',enabled:false,lease_ms:0});await command(0,{kind:'close'});
+    await command(1,{kind:'drive_disable'});await command(0,{kind:'close'});
    }finally{clearInterval(pulse);if(report)fs.writeFileSync(report,JSON.stringify(records,null,2));child.stdin.end('quit\n');}
   }
  };

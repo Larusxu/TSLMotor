@@ -15,7 +15,7 @@ export const word = (p: number[], i: number) => new DataView(Uint8Array.from(p).
 export function putWord(p: number[], i: number, v: number) { for (let j = 0; j < 4; j++) p[i + j] = (v >>> (j * 8)) & 255; }
 export function checkedProfile(p: number[], motor: number) {
   if (p.length !== 128 || String.fromCharCode(...p.slice(0, 4)) !== "MTR1" ||
-      word(p, 4) !== 0x00800001 || (p[12] | p[13] << 8) > 16 ||
+      word(p, 4) !== 0x00800001 || word(p,68)!==RUN2_TAG || (p[12] | p[13] << 8) > 16 ||
       (p[14] | p[15] << 8) !== motor || word(p, 120) !== crc32(p.slice(0, 120)) || word(p, 124) !== 0x31544d43)
     throw Error("电机档案版本、CRC 或编号不匹配");
   return p;
@@ -27,7 +27,7 @@ export function pidFromProfile(p: number[]): PidCfgPayload {
   return { ...parsePidConfig(word(p, 28)), flux_p, flux_i, torque_p, torque_i, vel_p, vel_i, pos_p, pos_i,
     torque_limit_ma: (word(p, 48) >>> 16) * MA_PER_RAW, flux_limit_ma: (word(p, 48) & 32767) * MA_PER_RAW,
     vel_limit_rpm: word(p, 52) / COUNTS_PER_RPM,
-    velocity_mode_limit_rpm:word(p,68)===0x324e5552?word(p,60)/COUNTS_PER_RPM:28730, uq_ud_limit: word(p, 56),
+    velocity_mode_limit_rpm:word(p,60)/COUNTS_PER_RPM, uq_ud_limit: word(p, 56),
     ma_per_count: MA_PER_RAW, counts_per_rpm: COUNTS_PER_RPM };
 }
 export function profileWithPid(base: number[], cfg: PidCfgPayload, motor: number) {
@@ -48,16 +48,14 @@ export function profileWithPid(base: number[], cfg: PidCfgPayload, motor: number
 export async function readMotorProfile(motor: number) {
   const r = await storageJob(motor, 1); checkedProfile(r.data, motor); return r;
 }
-export const RUN_TAG = 0x314e5552;
 export const RUN2_TAG = 0x324e5552;
 export const accelerationRaw = (v: number) => Math.max(1, Math.round(v * 65536 / 360 * 131072 * 16777216 / 60000000 ** 2));
 const accelerationUnits = (v: number) => v * 360 / 65536 / 131072 / 16777216 * 60000000 ** 2;
 export function runFromProfile(p: number[], fallback: ControlConfig): ControlConfig {
   const pid = pidFromProfile(p);
   const base = { ...fallback, mode: "position_ramp" as const, planning:"limits" as const, max_rpm: pid.vel_limit_rpm, limit_ma: pid.torque_limit_ma };
-  if (!word(p,68)) return base;
-  if (word(p,68)!==RUN_TAG&&word(p,68)!==RUN2_TAG) throw Error("不支持的运行配置版本");
-  return { ...base, max_rpm:word(p,68)===RUN2_TAG?word(p,112)/COUNTS_PER_RPM:pid.vel_limit_rpm,
+  if (word(p,68)!==RUN2_TAG) throw Error("不支持的运行配置版本");
+  return { ...base, max_rpm:word(p,112)/COUNTS_PER_RPM,
     accel_deg_s2: accelerationUnits(word(p,72)), decel_deg_s2: accelerationUnits(word(p,76)),
     trip_ma: word(p,80)*MA_PER_RAW, over_ms: word(p,84), sample_ms: word(p,88), comm_timeout_ms: word(p,92),
     mode: (["position_direct","position_ramp","velocity_direct","velocity_ramp"] as const)[word(p,104)],
@@ -71,19 +69,19 @@ export function profileWithRun(base: number[], pid: PidCfgPayload, cfg: ControlC
       cfg.comm_timeout_ms<2*cfg.sample_ms||cfg.comm_timeout_ms>5000) throw Error("运行参数约束冲突");
   const mode=["position_direct","position_ramp","velocity_direct","velocity_ramp"].indexOf(cfg.mode);
   if(mode<0)throw Error("不支持的运动模式");
-  // A single current/speed ceiling lives at 0x14A/0x14B. No task ceiling record.
-  const run=[RUN_TAG,accelerationRaw(cfg.accel_deg_s2),accelerationRaw(cfg.decel_deg_s2),Math.floor(cfg.trip_ma/MA_PER_RAW),
+  // RUN2 persists the operating speed separately from the long-term ceiling.
+  const run=[RUN2_TAG,accelerationRaw(cfg.accel_deg_s2),accelerationRaw(cfg.decel_deg_s2),Math.floor(cfg.trip_ma/MA_PER_RAW),
     cfg.over_ms,cfg.sample_ms,cfg.comm_timeout_ms,Math.max(5000,cfg.comm_timeout_ms),65536,mode,
-    cfg.fault_action==="disable"?2:1,0,256];
+    cfg.fault_action==="disable"?2:1,Math.floor(cfg.max_rpm*COUNTS_PER_RPM),256];
   run.forEach((v,i)=>putWord(p,68+4*i,v));putWord(p,120,crc32(p.slice(0,120)));return p;
 }
 export function validateCommonLimits(common:number[],expected:number[]) {
-  const maxMa=word(common,32),run2=word(expected,68)===RUN2_TAG;
+  const maxMa=word(common,32);
   if(!maxMa)throw Error("公共电流上限无效");
   if((word(expected,48)>>>16)*MA_PER_RAW>maxMa)throw Error(`超过公共电流上限 ${maxMa} mA`);
-  const maximum=run2?28730:word(common,36);
+  const maximum=28730;
   if(!maximum||word(expected,52)/COUNTS_PER_RPM>maximum)throw Error(`速度超过允许范围 ${maximum} rpm`);
-  if(run2&&(word(expected,60)/COUNTS_PER_RPM>28730||word(expected,112)>word(expected,60)||word(expected,52)>word(expected,60)))
+  if((word(expected,60)/COUNTS_PER_RPM>28730||word(expected,112)>word(expected,60)||word(expected,52)>word(expected,60)))
     throw Error("本次任务转速超过已保存的长期转速限幅；输入保持不变");
 }
 /** One explicit W25 + chip workflow; failure is never reported as a transaction rollback. */
@@ -103,7 +101,7 @@ async function applyConfiguration(motor:number,build:(before:number[])=>number[]
     await semanticMotion.stop(motor,true);
     await semanticMotion.wait(motor,10000,r=>r.motor?.drive===0&&!r.motor.motion_active);
   }
-  trace(online?"在线更新：保留任务、PWM、授权和积分器":"停止后配置：保留逻辑供电和授权");
+  trace(online?"在线更新：保留任务、PWM和积分器":"停止后配置：保留逻辑供电");
   trace("校验公共上限与模式约束");
   const common=await storageJob(0,1);
   if(common.data.length!==128||word(common.data,120)!==crc32(common.data.slice(0,120)))throw Error("公共配置CRC错误");
@@ -134,7 +132,7 @@ async function applyConfiguration(motor:number,build:(before:number[])=>number[]
     const fresh=await readMotorProfile(motor);
     if(fresh.data.some((v,i)=>v!==before.data[i]))throw Error("档案已被其他配置操作更新，请读取后再应用；本次尚未写入");
     online=false;
-    trace("停止已完成：重新提交未被接收的配置，保持运动授权");
+    trace("停止已完成：重新提交未被接收的配置");
     await semanticMotion.command(motor,{kind:"apply_configuration",payload});
   }
   await semanticMotion.wait(motor,30000,r=>!!r.motor?.config_verified&&!!r.motor.limits_valid&&!r.pending&&!r.motor.pending_action);
@@ -144,7 +142,7 @@ async function applyConfiguration(motor:number,build:(before:number[])=>number[]
   trace("核对 TMC 模式与有效限幅");
   const actual=await semanticMotion.command(motor,{kind:"get_state"});
   if(!actual.motor?.limits_valid||(!online&&actual.motor.drive!==0)||actual.motor.effective_iq_raw!==(word(after.data,48)>>>16)||
-      actual.motor.effective_velocity_raw!==modeVelocityRaw(after.data)||actual.motor.mode!==(word(after.data,68)?word(after.data,104):1))throw Error("W25 已保存，TMC 状态读回不一致；禁止使能");
+      actual.motor.effective_velocity_raw!==modeVelocityRaw(after.data)||actual.motor.mode!==word(after.data,104))throw Error("W25 已保存，TMC 状态读回不一致；禁止使能");
   semanticMotion.report("ok",`M${motor} 配置完成：TMC/W25 一致，编辑输入保持不变`);
   return after;
   } catch(error) {
@@ -162,7 +160,7 @@ export function applyMotorLongTermConstraints(motor:number,pid:PidCfgPayload) {
   return applyConfiguration(motor,base=>profileWithPiOnly(profileWithLongTermOnly(base,pid,motor),pid,motor),true);
 }
 /** PI page owns coefficients/normalization only. Unapplied control-card edits
- * must never leak into a PI commit; preserve saved limits and RUN1 verbatim. */
+ * must never leak into a PI commit; preserve saved limits and RUN2 verbatim. */
 export function profileWithPiOnly(base:number[],edit:PidCfgPayload,motor:number) {
   const saved=pidFromProfile(base);
   return profileWithPid(base,{...edit,torque_limit_ma:saved.torque_limit_ma,flux_limit_ma:saved.flux_limit_ma,
@@ -192,15 +190,13 @@ export async function tuneMotorPi(motor:number,group:0|1|2,pid:PidCfgPayload) {
   return message;
 }
 
-/** Apply current PI-page coefficients with the motion plan; retain the saved
- * right-hand limits rather than importing its unapplied edits. */
-export function profileWithControlOnly(base:number[],edit:PidCfgPayload,cfg:ControlConfig,motor:number) {
-  if(word(base,68)!==RUN2_TAG&&(word(base,60)!==0||word(base,112)!==0))throw Error("旧档案含非零扩展字段，不能无损迁移 RUN2");
-  const pi=profileWithPiOnly(base,edit,motor);
-  const built=profileWithRun(pi,pidFromProfile(pi),cfg,motor);
+/** Apply motion fields; retain saved PI rather than importing unrelated edits. */
+export function profileWithControlOnly(base:number[],_edit:PidCfgPayload,cfg:ControlConfig,motor:number) {
+  // Motion configuration must never apply unrelated, possibly stale PI drafts.
+  const built=profileWithRun(base,pidFromProfile(base),cfg,motor);
   if(!Number.isFinite(cfg.max_rpm)||cfg.max_rpm<=0||cfg.max_rpm>28730)throw Error("本次转速范围为 0～28730 rpm（不含0）");
   const task=Math.floor(cfg.max_rpm*COUNTS_PER_RPM);
-  const speedCeiling=word(base,68)===RUN2_TAG?word(base,60):Math.floor(28730*COUNTS_PER_RPM);
+  const speedCeiling=word(base,60);
   if(task>speedCeiling)throw Error(`本次任务 ${cfg.max_rpm} rpm 超过已保存的长期转速限幅 ${(speedCeiling/COUNTS_PER_RPM).toFixed(2)} rpm；请先应用长期约束，输入保持不变`);
   const next=[...checkedProfile(base,motor)];
   next.splice(28,20,...built.slice(28,48));
@@ -219,13 +215,6 @@ export function profileWithLongTermOnly(base:number[],edit:PidCfgPayload,motor:n
   next.splice(48,4,...built.slice(48,52));next.splice(56,4,...built.slice(56,60));
   const ceiling=edit.velocity_mode_limit_rpm??saved.velocity_mode_limit_rpm??28730;
   if(!Number.isFinite(ceiling)||ceiling<=0||ceiling>28730)throw Error("速度模式上限范围为 1～28730 rpm");
-  // Upgrade only on an explicit save, using the existing position ceiling and
-  // task profile. No arbitrary position-mode default is introduced.
-  if(word(next,68)!==RUN2_TAG) {
-    if(!word(next,68))throw Error("请先应用一次运动与保护参数，再保存模式级约束");
-    if(word(next,60)!==0||word(next,112)!==0)throw Error("旧档案使用非零 V_START，请先确认迁移策略");
-    putWord(next,112,word(next,52));putWord(next,68,RUN2_TAG);
-  }
   putWord(next,60,Math.floor(ceiling*COUNTS_PER_RPM));
   if(word(next,112)>word(next,60))throw Error("长期上限小于已保存的本次转速，请先降低本次转速");
   putWord(next,52,word(next,104)===0?word(next,112):word(next,60));
@@ -240,7 +229,7 @@ export function motionFromProfile(p:number[],fallback:ControlConfig):ControlConf
   return {...runFromProfile(p,fallback),limit_ma:fallback.limit_ma};
 }
 export function modeVelocityRaw(p:number[]) {
-  return word(p,68)===RUN2_TAG&&word(p,104)>=2?word(p,60):word(p,52);
+  return word(p,104)>=2?word(p,60):word(p,52);
 }
 
 /** Optional extension, independent of the deployed 128-byte MTR1 record. */

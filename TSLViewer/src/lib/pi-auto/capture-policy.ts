@@ -35,7 +35,7 @@ export function captureFailure(c:Capture,amplitude:number,travel:number):string 
     return !limit||amplitude>limit?limitMessage(c.loop,amplitude,limit):'激励在当前电流限幅内，主控仍拒绝启动；请检查PWM周期配置（不属于位置原点检查失败）';}
   if(c.error===6&&c.loop===2)return !c.velocityLimit||amplitude>c.velocityLimit?limitMessage(2,amplitude,c.velocityLimit):'激励在当前速度限幅内，主控仍拒绝启动；请检查PWM周期配置';
   if(c.error===6)return '位置PRBS启动条件不满足：请检查激励幅值、相对起点的最大偏移、临时位置偏置回读以及PWM周期配置；退出时恢复原坐标偏置';
-  return ['成功','TMC读写失败','已取消或授权超时','','电流或芯片故障','RTMI数据缺失','','配置恢复未完成'][c.error]??`错误码${c.error}`;
+  return ['成功','TMC读写失败','已取消','','电流或芯片故障','RTMI数据缺失','','配置恢复未完成'][c.error]??`错误码${c.error}`;
 }
 
 /** Percentages of the full homed stroke; convert to a symmetric native PRBS boundary. */

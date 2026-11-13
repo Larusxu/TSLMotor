@@ -7,7 +7,7 @@ import type { ControlConfig } from "./motor-control";
 /** Edits only. Verified register/profile ownership is in the Rust ParameterBank.
  * Per-motor drafts survive page navigation; never restored/enabled on a chip automatically. */
 import { DEFAULT_RAMP, type RampConfig } from "./motor-ramp";
-interface Draft { pid: PidCfgPayload; task: ControlConfig; ramp:RampConfig }
+interface Draft { pid: PidCfgPayload; pidLoaded:boolean; task: ControlConfig; ramp:RampConfig }
 const drafts = new Map<number, Draft>();
 const listeners = new Set<() => void>();
 /** Copy PI tuning fields only; verified physical readback must never quantize limit inputs. */
@@ -22,10 +22,11 @@ export function mergePiTuning(draft: PidCfgPayload, actual: PidCfgPayload): PidC
 function get(motor: number): Draft {
   if (!drafts.has(motor)) drafts.set(motor, {
     ramp:{...DEFAULT_RAMP},
-    pid: { flux_p: p.pid.curP, flux_i: p.pid.curI, torque_p: p.pid.curP, torque_i: p.pid.curI,
-      vel_p: p.pid.velP, vel_i: p.pid.velI, pos_p: p.pid.posP, pos_i: p.pid.posI,
+    pidLoaded:false,
+    pid: { flux_p: NaN, flux_i: NaN, torque_p: NaN, torque_i: NaN,
+      vel_p: NaN, vel_i: NaN, pos_p: NaN, pos_i: NaN,
       cur_norm_p: 1, cur_norm_i: 1, vel_norm_p: 1, vel_norm_i: 1, pos_norm_p: 1, pos_norm_i: 1,
-      vel_shift: 8, pos_sampling: 0, overwrite_target: false, keep_pos_target: false,
+      vel_shift: 8, pos_sampling: 0, overwrite_target: true, keep_pos_target: false,
       torque_limit_ma: p.limits.torqueMa, flux_limit_ma: p.limits.fluxMa,
       vel_limit_rpm: p.limits.velRpm, velocity_mode_limit_rpm:28730, uq_ud_limit: p.limits.uqUd,
       ma_per_count: MA_PER_COUNT, counts_per_rpm: 1099511627776 / 3600000000 },
@@ -46,6 +47,7 @@ export function useMotorConfiguration(motor: number) {
     listeners.forEach(cb => cb());
   };
   return { ...draft, setPid: (value: Draft["pid"] | ((p: Draft["pid"]) => Draft["pid"])) => update("pid", value),
+    loadPid:(value:Draft['pid'])=>{const old=get(motor);drafts.set(motor,{...old,pid:value,pidLoaded:true});listeners.forEach(cb=>cb());},
     setRamp: (value: Draft["ramp"] | ((p: Draft["ramp"]) => Draft["ramp"])) => update("ramp", value),
     setTask: (value: Draft["task"] | ((p: Draft["task"]) => Draft["task"])) => update("task", value) };
 }

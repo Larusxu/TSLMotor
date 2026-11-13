@@ -32,7 +32,7 @@ export default function HandIdentity(){
     </div>
     {app.mode!=="direct"&&<>
       <div className="rail-meta"><span>编码器 · M{app.motor}</span><b>{state?(state.align_valid?"有效":"待标定"):valid?(valid.encoder&(1<<(app.motor-1))?"有效":"待标定"):"未确认"}</b></div>
-      <div className="rail-meta"><span>找零 · M{app.motor}</span><b>{state?(state.span_valid&&state.home_neg_valid&&state.home_pos_valid?"有效":"待找零"):valid?(valid.homing&(1<<(app.motor-1))?"有效":"待找零"):"未确认"}</b></div>
+      <div className="rail-meta"><span>找零 · M{app.motor}</span><b style={{display:"flex",gap:8}}>{([['正端',state?.home_pos_valid],['负端',state?.home_neg_valid]] as const).map(([name,ok])=><span key={name} title={`${name}${ok?"有效":"无效"}`} style={{color:ok?"var(--ok)":"var(--muted)"}}>{name}</span>)}</b></div>
     </>}
   </>;
 }

@@ -394,46 +394,6 @@ function DirectTuningPage() {
               >
                 应用参数
               </Button>
-              {app.motor === 9 && <Button
-                variant="ghost"
-                disabled={app.jobRunning}
-                onClick={() => {
-                  setCurP(64); setCurI(48); setFluxP(64); setFluxI(48);
-                  setVelP(500); setVelI(250); setPosP(500); setPosI(0);
-                  setCurNp(1); setCurNi(1); setVelNp(1); setVelNi(1);
-                  setPosNp(1); setPosNi(1); setVelShift(8); setPosSampling(0);
-                  setOverwrite(false); setKeepPos(false);
-                  setTorqueLimit(500); setFluxLimit(0); setVelLimit(2000);
-                  setConfirm(false); setLoaded(false);
-                  app.toast("ok", "已载入 M9 找零 PID 与限流，请确认后写入并从芯片读取校验");
-                }}
-              >载入 M9 找零参数</Button>}
-              <Button
-                variant="ghost"
-                disabled={!app.connected}
-                onClick={() => {
-                  setCurP(p.pid.curP); setFluxP(p.pid.curP);
-                  setCurI(p.pid.curI); setFluxI(p.pid.curI);
-                  setVelP(p.pid.velP);
-                  setVelI(p.pid.velI);
-                  setPosP(p.pid.posP);
-                  setPosI(p.pid.posI);
-                  setCurNp(1);
-                  setCurNi(1);
-                  setVelNp(1);
-                  setVelNi(1);
-                  setPosNp(1);
-                  setPosNi(1);
-                  setVelShift(8);
-                  setTorqueLimit(p.limits.torqueMa);
-                  setFluxLimit(p.limits.fluxMa);
-                  setVelLimit(p.limits.velRpm);
-                  setUqUd(p.limits.uqUd);
-                  app.toast("ok", "已载入 Tesla 生产固件参数");
-                }}
-              >
-                载入生产参数
-              </Button>
               <Button
                 variant="ghost"
                 disabled={!app.connected}

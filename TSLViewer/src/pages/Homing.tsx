@@ -90,7 +90,7 @@ function localCheck(c: Cfg): string | null {
     ["额定电流", wire.rated_ma, 100, 3000],
     ["连续确认", wire.confirm_ms, 10, 1000],
     ["找零电流上限", wire.limit_ma, 100, 2000],
-    ["推进速度上限", wire.max_rpm, 100, 6000],
+    ["推进速度上限", wire.max_rpm, 100, 28730],
     ["退开量", wire.retreat_deg, 0, 1080],
     ["退开稳定等待", wire.settle_ms, 0, 10000],
     ["找零超时", wire.timeout_s, 5, 300],
@@ -370,7 +370,7 @@ function LegacyHomingPage() {
                 value={cfg.maxRpm}
                 onChange={(v) => setCfg({ ...cfg, maxRpm: v })}
                 min={100}
-                max={6000}
+                max={28730}
                 step={100}
                 unit="RPM"
                 label="推进速度上限"

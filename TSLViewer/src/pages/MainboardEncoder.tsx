@@ -10,31 +10,13 @@ import {ENCODER_PRESETS,STORAGE_PRESETS,TESLA_PROFILE} from "../lib/presets";
 import {hex,spiHalfPeriod,spiHzFromHalf,ssiFrameSeconds} from "../lib/units";
 import {encoderView,encoderCheck} from "../lib/encoder-view";
 import Gauge from "../components/EncoderGauge";
-import {AlignmentPanels, type AlignmentProgress} from "./Align";
-import type {StepState} from "../components/ui";
+import {AlignmentPanels} from "./Align";
+import {useAlignmentView} from "../lib/alignment-view";
 
 export default function MainboardEncoder(){
  const app=useApp(),s=semanticFresh(app.semantic)&&app.semantic.motor===app.motor?app.semantic.state:null;
  const [busy,setBusy]=useState(false),[note,setNote]=useState("");
- const [alignmentSteps,setAlignmentSteps]=useState<StepState[]>([]);
- const onAlignmentProgress=(progress:AlignmentProgress)=>{
-   setAlignmentSteps(previous=>{
-     if(progress.stage==="start")return [{idx:1,total:4,label:"启动电角度标定",status:"run",detail:progress.detail??""}];
-     const stageIndex:Record<AlignmentProgress["stage"],number> = {
-       start:1,accepted:2,scanning:2,verifying:3,completed:4,failed:4,cancelled:4,
-     };
-     const idx=stageIndex[progress.stage];
-     const names=["启动电角度标定","主控扫描执行","偏移写回及回读","标定结果确认"];
-     const current=previous.length?previous:[{idx:1,total:4,label:names[0],status:"run" as const,detail:""}];
-     const next:StepState[]=current.map(item=>item.idx<idx&&item.status==="run"?{...item,status:"ok"}:item);
-     const status:StepState["status"]=progress.stage==="failed"?"fail":progress.stage==="cancelled"?"info":progress.stage==="completed"?"ok":"run";
-     const entry:StepState={idx,total:4,label:names[idx-1],status,detail:progress.detail??""};
-     const at=next.findIndex(item=>item.idx===idx);
-     if(at>=0)next[at]=entry;else next.push(entry);
-     return next;
-   });
- };
- useEffect(()=>{setAlignmentSteps([]);},[app.motor,app.connected,app.semantic.bootId]);
+ const alignment=useAlignmentView(app.motor,app.cal.poles),alignmentSteps=alignment.steps;
  const [image,setImage]=useState<number[]|null>(null),[common,setCommon]=useState<number[]|null>(null);
  const [actual,setActual]=useState<number[]|null>(null),[live,setLive]=useState(false);
  const [cfg,setCfg]=useSharedEncoder(app.motor);
@@ -53,10 +35,10 @@ export default function MainboardEncoder(){
    setImage(m.data);if(!edited.current)setCfg(c=>({...c,offset:encoderView(null,m.data).offset}));app.setCal({poles:cfg.poles,cpr:cfg.cpr,pwmMaxCount:cfg.pwm,csaGain:cfg.csa});await readActual();
  };
  useEffect(()=>{
-   if(!app.connected||!s||!s.config_verified||s.motion_active||busy)return;
+   if(!app.connected||!s||!s.config_verified||s.motion_active||busy||alignment.busy)return;
    const key=`${app.motor}:${app.semantic.bootId}`;if(autoRead.current===key)return;
    autoRead.current=key;void run(()=>read(false));
- },[app.connected,app.motor,app.semantic.bootId,s?.config_verified,s?.drive,s?.permit,s?.motion_active]);
+ },[app.connected,app.motor,app.semantic.bootId,s?.config_verified,s?.drive,s?.motion_active,alignment.busy]);
  useEffect(()=>{if(!s?.config_verified)setActual(null);},[s?.config_verified]);
  useEffect(()=>{
    if(!live||!app.connected)return;let alive=true;
@@ -125,7 +107,7 @@ export default function MainboardEncoder(){
        {checks.map(([addr,name,want,index,mask])=>{const got=actual?actual[index]:null,status=encoderCheck(want,got,mask);return <tr key={addr}><td className="mono">{hex(addr,3)} <span className="muted tiny">{name}</span></td><td className="mono">{want===null?"—":hex(want)}</td><td><Badge tone={status.tone}>{status.text}</Badge></td></tr>;})}
      </tbody></table></div></Card>
    </div></div>
-   <AlignmentPanels onCompleted={()=>read()} onProgress={onAlignmentProgress}/>
+   <AlignmentPanels onCompleted={()=>read()}/>
    <div className="grid flow-2-1 encoder-monitor-row">
      <div className="col-stack">
      <Card title="配置流程" className="encoder-process-card" sub="WRITE · ALIGN" right={<Badge>{busy||s?.drive===1?"执行中":"空闲"}</Badge>}>

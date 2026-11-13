@@ -3,8 +3,7 @@
 .cylinder-summary b { font-size: 20px; color: var(--text); margin-right: 6px; font-variant-numeric: tabular-nums; }
 .cylinder-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
 .cylinder-card { min-width: 0; }
-.cylinder-card.selected { border-color: var(--accent); }
-.cylinder-heading { display: inline-flex; align-items: center; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; min-height: 36px; }
+.cylinder-heading { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: inherit; font: inherit; min-height: 36px; }
 .cylinder-heading span { color: var(--text-2); font-size: 13px; font-weight: 400; }
 .cylinder-stats { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; padding-bottom: 10px; }
 .cylinder-stats div { display: grid; gap: 8px; }

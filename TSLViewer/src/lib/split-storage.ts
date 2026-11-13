@@ -1,5 +1,4 @@
 import { invokeCommand } from "./api";
-import { semanticMotion } from "./semantic-motion";
 
 export type StorageReply = {
   id: number; phase: number; result: number; motor: number; operation: number;
@@ -12,23 +11,21 @@ function nextId() {
   return lastId;
 }
 async function send(motor: number, operation: number, id: number, offset = 0, data: number[] = []) {
-  return invokeCommand<StorageReply>("motor_storage", { motor, request: { id, operation, offset, data } });
+  const reply=await invokeCommand<StorageReply>("motor_storage", { motor, request: { id, operation, offset, data } });
+  return reply;
 }
 const errors: Record<number, string> = {
-  [-2]: "通信超时", [-4]: "没有有效档案或备份", [-6]: "参数或身份绑定不匹配",
+  [-2]: "通信超时", [-4]: "没有有效档案或备份", [-6]: "配置参数或存储请求无效，请检查输入值",
   [-7]: "存储或共享总线忙，请稍后重试", [-8]: "存储读写或恢复失败", [-10]: "存储设备未就绪",
 };
 export class StorageError extends Error {
   constructor(public readonly result: number, public readonly flags: number) {
-    super(`${errors[result] ?? "主控拒绝操作"} (${result})；恢复标志=${flags}`);
+    super(`${errors[result] ?? "主控拒绝操作"} (${result})${flags ? `；恢复标志=${flags}` : ""}`);
   }
 }
-async function executeStorageJob(motor: number, operation: 1 | 3 | 4 | 5 | 7 | 8 | 9 | 10 | 11, payload?: number[]) {
-  // Passive page reads do not acquire motion ownership. Explicit writes use
-  // the shared configuration session instead of an expired legacy OPEN.
-  if ([3,5,8,10,11].includes(operation)) await semanticMotion.ensureConfigurationSession();
+async function executeStorageJob(motor: number, operation: 1 | 3 | 4 | 5 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15, payload?: number[]) {
   const id = nextId();
-  if (operation === 3 || operation === 8 || operation === 11) {
+  if (operation === 3 || operation === 8 || operation === 11 || operation === 13 || operation === 15) {
     if (!payload || payload.length !== 128) throw new Error("W25 档案必须是 128 字节 ENC1/ENC2/MTR1 记录");
     for (const offset of [0, 106]) {
       const r = await send(motor, 2, id, offset, payload.slice(offset, offset + 106));
@@ -39,7 +36,7 @@ async function executeStorageJob(motor: number, operation: 1 | 3 | 4 | 5 | 7 | 8
   // A rejected READ has not started any work. Only these passive operations
   // may wait for a short-lived shared-flash transaction; never replay saves.
   const readDeadline = Date.now()+1200;
-  while ([1,7,9].includes(operation) && r.result===-7 && r.phase===5 && Date.now()<readDeadline) {
+  while ([1,7,9,12,14].includes(operation) && r.result===-7 && r.phase===5 && Date.now()<readDeadline) {
     await new Promise(resolve=>setTimeout(resolve,80));
     r=await send(motor,operation,id);
   }
@@ -47,7 +44,12 @@ async function executeStorageJob(motor: number, operation: 1 | 3 | 4 | 5 | 7 | 8
   while (r.phase === 2 || r.phase === 3) {
     if (Date.now() >= deadline) throw new Error("等待超时：结果未知，请查询设备，勿重复下发保存");
     await new Promise(resolve => setTimeout(resolve, 80));
-    r = await send(motor, 6, id);
+    try { r = await send(motor, 6, id); }
+    catch(error) {
+      // Internal Flash can briefly delay a reply. Query only this accepted
+      // job again; never replay staging, save, or a motor command.
+      if(!/timeout|timed out|\u8d85\u65f6/i.test(String(error)))throw error;
+    }
   }
   if (r.result || r.phase !== 4) {
     throw new StorageError(r.result, r.flags);
@@ -76,7 +78,7 @@ export function decodeBackup(data: number[], hand: number, motor: number) {
 
 // The MCU exposes one staged storage job. Serialize callers across pages.
 let storageQueue: Promise<unknown> = Promise.resolve();
-export function storageJob(motor:number,operation:1|3|4|5|7|8|9|10|11,payload?:number[]) {
+export function storageJob(motor:number,operation:1|3|4|5|7|8|9|10|11|12|13|14|15,payload?:number[]) {
  const job=storageQueue.then(()=>executeStorageJob(motor,operation,payload));
  storageQueue=job.catch(()=>{});return job;
 }

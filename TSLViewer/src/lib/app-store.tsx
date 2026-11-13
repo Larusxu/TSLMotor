@@ -195,6 +195,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setModeState(value); saveConnectionMode(value);
   }, []);
   const [motor, setMotorState] = useState(1);
+  useEffect(() => { semanticMotion.observeMotor(motor); }, [motor]);
   const [motionActive, setMotionActive] = useState(false);
   const [motorTmc, setMotorTmc] = useState<"unknown" | "online" | "offline">("unknown");
   const [ports, setPorts] = useState<PortInfo[]>([]);
@@ -392,7 +393,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (mode !== "direct") {
         const current=await semanticMotion.command(motor,{kind:"get_state"});
         if(current.motor?.logic_power&&current.motor.config_verified&&current.motor.limits_valid&&!current.pending){
-          await semanticMotion.permit(motor, true);
           setMotorTmc("online");return;
         }
         await stopStream();
@@ -400,7 +400,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!ready.motor?.logic_power || !ready.motor.config_verified || !ready.motor.limits_valid)
           throw Error("主控初始化尚未确认供电与配置");
         setMotorTmc("online");
-        await semanticMotion.permit(motor, true);
         toast("ok", `M${motor} 逻辑供电与配置已就绪，可直接操作`);
         return;
       }
@@ -797,20 +796,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     appendLog({ts:Date.now(),level,source:"motor/command",message});
   }), [appendLog]);
 
-  // The enabled motor is usable without a separate host ARM toggle. Grant
-  // the existing MCU lease once per connection/motor/power transition, never
-  // silently undo an operator's later explicit permit cancellation.
-  useEffect(() => {
-    if (!connected || mode === "direct" || semantic.motor !== motor ||
-        !semantic.state?.logic_power || !semantic.state.config_verified || acquisitionLane.busy()) return;
-    void semanticMotion.permit(motor, true).catch(e => appendLog({ ts: Date.now(), level: "warn", source: "motor/permit", message: String(e) }));
-  }, [connected, mode, motor, semantic.motor, semantic.bootId, semantic.state?.logic_power, semantic.state?.config_verified]);
   const lastDiagnosticState = useRef<SemanticView | null>(null);
   useEffect(() => {
     const old=lastDiagnosticState.current, next=semantic;
     if (!next.state || !next.receivedAt) return;
     lastDiagnosticState.current=next;
-    const keys=["logic_power","config_verified","align_valid","span_valid","home_neg_valid","home_pos_valid","permit","drive","fault","last_error","mode"] as const;
+    const keys=["logic_power","config_verified","align_valid","span_valid","home_neg_valid","home_pos_valid","drive","fault","last_error","mode"] as const;
     const changed=keys.filter(k=>!old?.state||old.motor!==next.motor||old.bootId!==next.bootId||old.state[k]!==next.state![k]);
     if(!changed.length)return;
     const message=`M${next.motor} boot=${next.bootId} task=${next.taskId ?? 0} MCU=${next.state.sampled_at_ms}ms `+
@@ -818,7 +809,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       (next.state.fault?" 故障="+[[1,"急停"],[2,"持续过流"],[4,"反馈超时"],[8,"电气故障"],[16,"越界"],[32,"TMC I/O"],[64,"停止超时"]].filter(([bit])=>(next.state!.fault&Number(bit))!==0).map(([,name])=>name).join("/"):"");
     const travelStop=next.state.last_error===15&&!next.state.fault;
     const retryableStop=next.state.last_error===3&&!next.state.fault;
-    appendLog({ts:Date.now(),level:next.state.fault||(next.state.last_error&&!travelStop&&!retryableStop)?"error":travelStop||retryableStop||changed.some(k=>["logic_power","align_valid","span_valid"].includes(k)&&!next.state![k])?"warn":"info",source:"motor/state",message:message+(travelStop?" 到达行程限位，已请求停止；授权与找零记录保留，可向行程内移动":retryableStop?" 运动条件暂未满足，已请求关闭PWM；设备未锁存故障，可再次使能":"")});
+    appendLog({ts:Date.now(),level:next.state.fault||(next.state.last_error&&!travelStop&&!retryableStop)?"error":travelStop||retryableStop||changed.some(k=>["logic_power","align_valid","span_valid"].includes(k)&&!next.state![k])?"warn":"info",source:"motor/state",message:message+(travelStop?" 到达行程限位，已请求停止；找零记录保留，可向行程内移动":retryableStop?" 运动条件暂未满足，已请求关闭PWM；设备未锁存故障，可再次使能":"")});
   },[semantic,appendLog]);
 
   useEffect(() => semanticMotion.subscribeErrors(error => {

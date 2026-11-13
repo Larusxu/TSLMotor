@@ -46,7 +46,7 @@ try{
  await (await import(lib('split-storage'))).storageJob(1,3,profile);
  await motion.command(1,{kind:'task_speed',mode:0,velocity_raw:Math.floor(testTask.max_rpm*m.COUNTS_PER_RPM)});
  await motion.wait(1,10000,r=>!r.pending&&r.motor.drive===0);
- await motion.permit(1,true);await motion.enable(1);
+ await motion.enable(1);
  const attemptStart=h.records.length;
  await m.applyMotorConfiguration(1,m.pidFromProfile(profile),testTask);
  const attempts=h.records.slice(attemptStart).filter(r=>r.request?.command?.kind==='apply_configuration');
@@ -65,5 +65,5 @@ finally{
  await storage.storageJob(1,3,profile);if(JSON.stringify((await m.readMotorProfile(1)).data)!==JSON.stringify(profile))throw Error('Archive restore mismatch');
  console.log('CONFIG_RESTORED_EXACT_W25_AND_ORIGINAL_LIVE_PI');
  }}catch(e){console.error('CONFIG_RESTORE_FAILED',e.message);process.exitCode=1;}
- finally{try{if(motion){await motion.permit(1,false);await motion.close();}}finally{await h.close();}}
+ finally{try{if(motion){await motion.command(1,{kind:"drive_disable"});await motion.close();}}finally{await h.close();}}
 }

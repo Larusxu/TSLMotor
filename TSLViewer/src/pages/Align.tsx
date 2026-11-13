@@ -16,6 +16,7 @@ import {
 } from "../components/ui";
 import { countsFromMa, fmt } from "../lib/units";
 import { semanticCommission } from "../lib/semantic-commission";
+import {useAlignmentView,patchAlignment,alignmentProgress,type AlignmentProgress} from "../lib/alignment-view";
 import { semanticFresh, readEncoderSnapshot } from "../lib/semantic-state";
 import { semanticMotion } from "../lib/semantic-motion";
 import type { CalibCfgPayload, CalibResult } from "../lib/types";
@@ -30,25 +31,27 @@ const PLACEHOLDER_GROUPS: CalibResult["groups"] = [0, 90, 180, 270].map((deg) =>
 }));
 
 /** 电角度对齐 + 结果 + 速度闭环。作为「编码器与对齐」页的第二节复用。 */
-export type AlignmentProgress = { stage: "start" | "accepted" | "scanning" | "verifying" | "completed" | "failed" | "cancelled"; detail?: string };
+export type {AlignmentProgress} from "../lib/alignment-view";
 export function AlignmentPanels({ onCompleted, onProgress }: { onCompleted?: () => Promise<void>; onProgress?: (progress: AlignmentProgress) => void } = {}) {
   const app = useApp();
-  const [fluxMa, setFluxMa] = useState(300);
-  const [poles, setPoles] = useState(app.cal.poles);
-  const [settle, setSettle] = useState(700);
-  const [stepDeg, setStepDeg] = useState(90);
-  const [endDeg, setEndDeg] = useState(720);
-  const [writeBack, setWriteBack] = useState(true);
-  const [dryRun, setDryRun] = useState(false);
+  const view=useAlignmentView(app.motor,app.cal.poles);
+  const {fluxMa,poles,settle,stepDeg,endDeg,writeBack,dryRun,busy:commissionBusy,note:commissionNote,offset:verifiedOffset}=view;
+  const setFluxMa=(fluxMa:number)=>patchAlignment(app.motor,{fluxMa});
+  const setPoles=(poles:number)=>patchAlignment(app.motor,{poles});
+  const setSettle=(settle:number)=>patchAlignment(app.motor,{settle});
+  const setStepDeg=(stepDeg:number)=>patchAlignment(app.motor,{stepDeg});
+  const setEndDeg=(endDeg:number)=>patchAlignment(app.motor,{endDeg});
+  const setWriteBack=(writeBack:boolean)=>patchAlignment(app.motor,{writeBack});
+  const setDryRun=(dryRun:boolean)=>patchAlignment(app.motor,{dryRun});
+  const setCommissionBusy=(busy:boolean)=>patchAlignment(app.motor,{busy});
+  const setCommissionNote=(note:string)=>patchAlignment(app.motor,{note});
+  const setVerifiedOffset=(offset:number|null)=>patchAlignment(app.motor,{offset});
+  const progress=(value:AlignmentProgress)=>{alignmentProgress(app.motor,value);onProgress?.(value);};
   const result = app.mode === "direct" ? app.alignment : null;
   const [rpm, setRpm] = useState(100);
   const [runSafety, setRunSafety] = useState(false);
-  const [commissionBusy, setCommissionBusy] = useState(false);
-  const [commissionNote, setCommissionNote] = useState("");
-  const [verifiedOffset, setVerifiedOffset] = useState<number | null>(null);
   const mainboard = app.mode === "main485" || app.mode === "maincan";
   const state = app.connected && app.semantic.motor === app.motor && semanticFresh(app.semantic) ? app.semantic.state : null;
-  useEffect(()=>{setVerifiedOffset(null);},[app.connected,app.motor,app.semantic.bootId]);
   useEffect(()=>{
     if(state&&!state.align_valid)setVerifiedOffset(null);
     if(!mainboard||!app.connected||!state?.config_verified||!state.align_valid||state.motion_active)return;
@@ -64,34 +67,33 @@ export function AlignmentPanels({ onCompleted, onProgress }: { onCompleted?: () 
     if (dryRun || !writeBack) throw new Error("主控标定会验证并保存 W25 档案；请关闭干跑并勾选自动写回");
     if (poles !== app.cal.poles) throw new Error("极对数须先保存并由主控读回验证");
     setCommissionBusy(true); setCommissionNote("主控已接管：执行标定扫描");
-    onProgress?.({stage:"start",detail:"准备主控标定命令"});
+    progress({stage:"start",detail:"准备主控标定命令"});
     try {
       await app.stopStream();
       let accepted = false;
       await semanticCommission.align(app.motor, { scanDegrees: endDeg, stepDegrees: stepDeg,
         settleMs: settle, currentMa: fluxMa }, r => {
-          if (!accepted) { accepted = true; onProgress?.({stage:"accepted",detail:"主控已应答对齐指令"}); }
+          if (!accepted) { accepted = true; progress({stage:"accepted",detail:"主控已应答对齐指令"}); }
           if (r.motor) {
             if (r.motor.drive === 1) {
               setCommissionNote("主控执行中：扫描 / 读回");
-              onProgress?.({stage:"scanning",detail:"主控正在执行扫描（阶段状态）"});
+              progress({stage:"scanning",detail:"主控正在执行扫描（阶段状态）"});
             } else {
               setCommissionNote("主控正在确认标定结果");
-              onProgress?.({stage:"verifying",detail:"等待主控标定验证"});
+              progress({stage:"verifying",detail:"等待主控标定验证"});
             }
           }
         });
-      onProgress?.({stage:"verifying",detail:"校验偏移与写回结果"});
-      await semanticMotion.permit(app.motor,false);
+      progress({stage:"verifying",detail:"校验偏移与写回结果"});
       const readback = await semanticMotion.command(app.motor,{kind:"encoder_state"});
       const value = readback.encoder?.[1] ? readback.encoder[4] : null;
       setVerifiedOffset(value == null ? null : value & 0xffff);
       await onCompleted?.();
       setCommissionNote(`主控标定及 W25 / M24 保存比对已确认，实际偏移=${value == null ? "读回暂不可用" : value & 0xffff}；机械双端零点需重新建立`);
-      onProgress?.({stage:"completed",detail:value == null ? "主控标定完成，偏移尚未回读" : `偏移 ${value & 0xffff} 已回读`});
+      progress({stage:"completed",detail:value == null ? "主控标定完成，偏移尚未回读" : `偏移 ${value & 0xffff} 已回读`});
     } catch (e) {
       const message = String(e);
-      onProgress?.({stage:message.includes("取消") ? "cancelled" : "failed",detail:message});
+      progress({stage:message.includes("取消") ? "cancelled" : "failed",detail:message});
       setCommissionNote(message); app.toast("error", message);
     }
     finally { setCommissionBusy(false); }
@@ -154,7 +156,7 @@ export function AlignmentPanels({ onCompleted, onProgress }: { onCompleted?: () 
                 variant="ghost"
                 icon={<Icon.Stop width={13} height={13} />}
                 disabled={!app.jobRunning && !commissionBusy}
-                onClick={() => { if (commissionBusy) { onProgress?.({stage:"cancelled",detail:"已请求取消，等待任务退出"}); void semanticCommission.cancel(); } else app.cancel(); }}
+                onClick={() => { if (commissionBusy) { progress({stage:"cancelled",detail:"已请求取消，等待任务退出"}); void semanticCommission.cancel(); } else app.cancel(); }}
               >
                 取消
               </Button>

@@ -121,7 +121,10 @@ impl ParameterBank {
 }
 
 pub fn observe(link: &Link, snap: PidSnapshot) -> Result<ParameterState, String> {
-    let motor = link.focused_motor() as usize;
+    observe_for(link,link.focused_motor(),snap)
+}
+pub fn observe_for(link:&Link,motor:u8,snap:PidSnapshot)->Result<ParameterState,String>{
+    let motor = motor as usize;
     if !(1..=16).contains(&motor) {
         return Err("电机号无效".into());
     }

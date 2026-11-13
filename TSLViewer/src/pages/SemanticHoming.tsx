@@ -1,11 +1,25 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useApp } from "../lib/app-store";
-import { readSharedHome } from "../lib/shared-settings";
 import { semanticMotion } from "../lib/semantic-motion";
 import { semanticFresh } from "../lib/semantic-state";
 import { SemanticControls } from "../components/SemanticControls";
 import { fmt, tempC } from "../lib/units";
-import { Button, Card, Field, SelectField, Badge, Icon, Stat } from "../components/ui";
+import { Button, Card, Field, SelectField, Badge, Icon, Stat, NumField, Notice } from "../components/ui";
+import {api} from "../lib/api";
+import type {HomingState} from "../lib/types";
+import {HOME_CONFIG_FIELDS} from "../lib/home-config";
+import {readSharedHome,writeSharedHome,useSharedHome} from "../lib/shared-settings";
+import {LinkedHoming,defaultHomePartner,homeTargets} from "../lib/linked-homing";
+import {useHomePolicy,readHomePolicy} from "../lib/home-policy";
+
+const linkedHoming=new LinkedHoming(semanticMotion,motor=>api.homingState(motor));
+const linkedOptions=new Map<number,{enabled:boolean;text:string}>();
+const homeFlowOptions=new Map<number,{complex:boolean;middle:boolean}>();
+
+const homeCache=new Map<number,HomingState>();
+const speedCache=new Map<number,number>();
+const adaptiveLabels=["待开始","正端找零","记录正端","建立稳定运动基线","检测负端受力转折","负端候选已记录","返回正端","稳定与坐标确认","完成"];
+const loadLabels=["采集稳定运动窗口","建立局部基线","稳定运动基线有效","负载转折候选"];
 
 /** Mainboard telemetry only. Missing optional firmware fields must never be guessed. */
 function LiveStats() {
@@ -50,18 +64,68 @@ function LiveStats() {
 }
 
 export default function SemanticHoming() {
+  const policy=useHomePolicy();
   const app = useApp(), s = app.connected && app.semantic.motor === app.motor && semanticFresh(app.semantic) ? app.semantic.state : null;
   const [direction,setDirection]=useState(0);
+  const [linkedEnabled,setLinkedEnabled]=useState(linkedOptions.get(app.motor)?.enabled??false);
+  const [linkedText,setLinkedText]=useState(linkedOptions.get(app.motor)?.text??defaultHomePartner(app.motor));
+  const [flow,setFlow]=useState(homeFlowOptions.get(app.motor)??{complex:false,middle:false});
+  const updateFlow=(next:typeof flow)=>{setFlow(next);homeFlowOptions.set(app.motor,next);};
+  const linked=useSyncExternalStore(linkedHoming.subscribe,linkedHoming.getSnapshot);
+  let linkedMotors:number[]=[],linkedError="";
+  try{linkedMotors=homeTargets(app.motor,linkedEnabled,linkedText);}catch(e){linkedError=String(e).replace(/^Error: /,"");}
+  useEffect(()=>{
+    const members=policy.linked.split(',').map(Number),included=members.includes(app.motor);
+    setFlow({complex:included&&policy.complex,middle:included&&policy.middle});
+    setLinkedEnabled(included&&members.length>1);
+    setLinkedText(included?members.filter(m=>m!==app.motor).join(','):"");
+    setDirection(included?policy.direction:0);
+  },[app.motor,policy]);
+  const [adaptiveRpm,setAdaptiveRpm]=useState(policy.rpm);
+  useEffect(()=>setAdaptiveRpm(policy.rpm),[app.motor,policy.rpm]);
+  useEffect(()=>{if(app.connected)void readHomePolicy().catch(e=>app.toast("error",String(e)));},[app.connected]);
   const [busy,setBusy]=useState(false),[note,setNote]=useState("");
-  useEffect(()=>{if(app.connected)void readSharedHome(app.motor).catch(e=>setNote(String(e)));},[app.connected,app.motor]);
-  const start = async () => {
+  const home=useSharedHome();
+  const [configBusy,setConfigBusy]=useState(false),[configNote,setConfigNote]=useState("");
+  const [result,setResult]=useState<HomingState|null>(null);
+  useEffect(()=>{
+    let disposed=false,timer:ReturnType<typeof setTimeout>;
+    setResult(homeCache.get(app.motor)??null);
+    if(!app.connected)return;
+    void readSharedHome(1,true).catch(()=>{});
+    const poll=async()=>{
+      try {
+        if(!app.jobRunning) {
+          const next=await api.homingState(app.motor);
+          if(next.stage===2||next.stage===3)await semanticMotion.command(app.motor,{kind:"get_state"});
+          if(!disposed){homeCache.set(app.motor,next);setResult(next);}
+        }
+      }catch{/* Keep the last confirmed status; connection UI reports link errors. */}
+      if(!disposed)timer=setTimeout(poll,400);
+    };
+    void poll();return()=>{disposed=true;clearTimeout(timer);};
+  },[app.connected,app.motor,app.jobRunning]);
+  const parameterAction=async(write:boolean)=>{
+    setConfigBusy(true);setConfigNote("");
+    try {
+      if(write)await writeSharedHome(1);else await readSharedHome(1);
+      setConfigNote(write?"已写入公共 Flash 并回读确认；下次找零使用此参数":"已加载公共 Flash 参数");
+    }catch(e){setConfigNote(String(e));app.toast("error",String(e));}
+    finally{setConfigBusy(false);}
+  };
+  const start = async (adaptive=false) => {
     setBusy(true); setNote("");
     try {
       await app.stopStream();
-      if(s?.drive===2){await semanticMotion.stop(app.motor,true);await semanticMotion.wait(app.motor,10000,r=>r.motor?.drive===0);}
-      if(!s?.config_verified)await semanticMotion.initialize(app.motor);
-      await semanticMotion.command(app.motor, { kind: "homing_start", direction: direction === 1 ? 0 : 1,
-        step_unit: 100, dual: direction === 0 });
+      if(!adaptive){
+        if(linkedError)throw Error(linkedError);
+        await linkedHoming.start(linkedMotors,direction,(home.config[7]*2+15)*1000,{complex:linkedEnabled&&flow.complex,returnMiddle:(direction===0||direction===2)&&flow.middle});
+        return;
+      }
+      const current=await semanticMotion.command(app.motor,{kind:"get_state"});
+      if(current.motor?.drive===2){await semanticMotion.stop(app.motor,true);await semanticMotion.wait(app.motor,10000,r=>r.motor?.drive===0);}
+      if(!current.motor?.config_verified)await semanticMotion.initialize(app.motor);
+      await semanticMotion.command(app.motor,adaptive?{kind:"homing_adaptive",velocity_rpm:adaptiveRpm,return_positive:policy.positive}:{kind:"homing_start",direction:direction===2?2:direction===1?0:1,step_unit:100,dual:direction===0||direction===2});
       setNote("主控已接收找零任务；以状态卡与双端有效标志判断结果");
     } catch (e) { setNote(String(e)); app.toast("error",`M${app.motor} 找零启动失败：${String(e)}`); } finally { setBusy(false); }
   };
@@ -80,7 +144,7 @@ export default function SemanticHoming() {
       `预警 0x${protectionBits.toString(16).toUpperCase()}`;
   const markers = [
     { label: "驱动", value: !s ? "未确认" : (["未使能", "初始化", "已使能", "故障"][s.drive] ?? "未确认"), tone: s?.drive === 2 ? "ok" : "warn" },
-    { label: "运动", value: stateText(s?.permit, "已授权", "未授权"), tone: s?.permit ? "ok" : "warn" },
+    { label: "驱动", value: stateText(s?.drive === 2, "已使能", "未使能"), tone: s?.drive === 2 ? "ok" : "warn" },
     { label: "找零", value: homing, tone: s?.span_valid ? "ok" : "warn" },
     { label: "电角度", value: stateText(s?.align_valid, "已对齐", "未对齐"), tone: s?.align_valid ? "ok" : "warn" },
     { label: "配置", value: stateText(s?.config_verified, "已校验", "未校验"), tone: s?.config_verified ? "ok" : "warn" },
@@ -101,14 +165,79 @@ export default function SemanticHoming() {
       </div>
     </section>
     <div className="homing-operations"><SemanticControls>
-    <Card title="找零控制" right={<Badge tone={s?.motion_owner===2?"accent":"neutral"}>{s?.motion_owner===2?"正在找零":"主控执行"}</Badge>}>
+    <div className="homing-methods-grid">
+    <Card title="双端自适应找零" bodyClass="stack adaptive-home-body" right={<Badge tone={result?.adaptive&&result.stage===1?"accent":"neutral"}>受力转折识别</Badge>}>
+      <div className="adaptive-home-status" role="status" aria-live="polite">
+        <span className="tiny muted">M{app.motor} · 当前阶段</span>
+        <strong>{!app.connected?"未连接":result?.adaptive?(result.stage===2?"找零完成":result.stage===3?"已停止 · 端点未确认":adaptiveLabels[result.adaptive_phase??0]??"等待状态"):"待开始"}</strong>
+        <span>{result?.adaptive?loadLabels[result.load_phase??0]:"正端找零 → 负端识别 → 返回正端"}</span>
+      </div>
+      <ol className="adaptive-home-steps" aria-label="自适应找零阶段">
+        {["正端参考","建立基线","负端候选","返回确认"].map((label,i)=>{
+          const phase=result?.adaptive?result.adaptive_phase??0:0;
+          const cut=[1,3,4,6][i],next=[3,4,6,8][i];
+          return <li key={label} className={phase>=next?"is-complete":phase>=cut?"is-current":""}><span>{i+1}</span>{label}</li>;
+        })}
+      </ol>
+      <div className="adaptive-home-metrics">
+        <Stat label="找零电流" value={result?.adaptive?fmt(result.iq_ma,0):"—"} unit="mA"/>
+        <Stat label="识别用时" value={result?.adaptive?fmt(result.elapsed_ms/1000,1):"—"} unit="s"/>
+        <Stat label="转折得分" value={result?.adaptive?fmt(result.edge_score??0,1):"—"}/>
+        <Stat label="候选行程" value={result?.adaptive&&(result.travel_counts??0)>0?fmt((result.travel_counts??0)/65536,2):"—"} unit="圈"/>
+      </div>
+      {result?.adaptive&&result.stage===3&&<Notice tone="warn">{result.message||"本次未确认可信端点，已停止；未写入新的行程。"}</Notice>}
+      <Field label="负端搜索转速"><NumField label="负端搜索转速" value={adaptiveRpm} unit="rpm" min={1} max={60000} disabled={busy||result?.stage===1} onChange={v=>{setAdaptiveRpm(v);speedCache.set(app.motor,v);}}/></Field>
+      <div className="adaptive-home-actions">
+        <Button variant="primary" disabled={busy||linked.busy||!s||!s.align_valid||!!s.fault||s.drive===1||s.motion_active} onClick={()=>void start(true)}>开始自适应找零</Button>
+        <Button variant="ghost" disabled={!s?.motion_active&&!busy} onClick={()=>void semanticMotion.stop(app.motor,true).catch(e=>setNote(String(e)))}>停止</Button>
+      </div>
+    </Card>
+    <Card title="原找零 · 接触电流" bodyClass="stack legacy-home-body" right={<Badge tone={s?.motion_owner===2&&!result?.adaptive?"accent":"neutral"}>公共 Flash 参数</Badge>}>
+      <div className="homing-parameter-grid">
+        {HOME_CONFIG_FIELDS.map(({index,name,unit,min,max,scale=1})=><Field key={index} label={name}>
+          <NumField label={name} value={home.config[index]/scale} unit={unit} min={min/scale} max={max/scale} step={1/scale} disabled={configBusy}
+            clampOnCommit={false} onChange={v=>home.setConfig(home.config.map((x,i)=>i===index?Math.round(v*scale):x))}/>
+        </Field>)}
+      </div>
+      <div className="row-wrap homing-parameter-actions">
+        <Button disabled={!app.connected||configBusy} onClick={()=>void parameterAction(false)}>加载参数</Button>
+        <Button disabled={!app.connected||configBusy} onClick={()=>void parameterAction(true)}>{configBusy?"处理中…":"写入配置"}</Button>
+      </div>
+      {configNote&&<div className="tiny muted" role="status">{configNote}</div>}
+      <div className="row-wrap" style={{gap:12,alignItems:"end"}}>
+        <label className="row" style={{gap:8,minHeight:44}}>
+          <input type="checkbox" checked={linkedEnabled} disabled={busy||linked.busy||!!s?.motion_active}
+            onChange={e=>{setLinkedEnabled(e.target.checked);linkedOptions.set(app.motor,{enabled:e.target.checked,text:linkedText});}}/>
+          联动找零
+        </label>
+        <Field label="附加电机编号">
+          <div className="input-wrap" style={{width:180,opacity:!linkedEnabled||busy||linked.busy?0.45:1}}>
+            <input aria-label="联动找零附加电机编号" value={linkedText} placeholder="1,5,9"
+              disabled={!linkedEnabled||busy||linked.busy||!!s?.motion_active} aria-invalid={linkedEnabled&&!!linkedError}
+              aria-describedby={linkedEnabled&&linkedError?"linked-home-error":undefined}
+              onChange={e=>{setLinkedText(e.target.value);linkedOptions.set(app.motor,{enabled:linkedEnabled,text:e.target.value});}}/>
+          </div>
+        </Field>
+        {linkedEnabled&&!linkedError&&<span className="tiny muted">{linkedMotors.map(m=>`M${m}`).join(" + ")}</span>}
+      </div>
+      {linkedEnabled&&linkedError&&<div id="linked-home-error" role="alert" className="tiny" style={{color:"var(--danger)"}}>{linkedError}</div>}
+      <div className="row-wrap">
+        <label className="row"><input type="checkbox" checked={linkedEnabled&&flow.complex} disabled={!linkedEnabled||linkedMotors.length!==2||busy||linked.busy} onChange={e=>updateFlow({...flow,complex:e.target.checked})}/>复杂工况</label>
+        <label className="row"><input type="checkbox" checked={(direction===0||direction===2)&&flow.middle} disabled={(direction!==0&&direction!==2)||busy||linked.busy} onChange={e=>updateFlow({...flow,middle:e.target.checked})}/>找零结束回到行程中点</label>
+      </div>
+      {linked.motors.length>0&&<div className="row-wrap" role="status" aria-live="polite">
+        {linked.motors.map(motor=><Badge key={motor} tone={linked.states[motor]?.stage===2?"ok":linked.states[motor]?.stage===3?"warn":"neutral"}>
+          M{motor} · {linked.states[motor]?.stage===2?"完成":linked.states[motor]?.stage===3?"失败":linked.busy?(["找零中","寻找接触","候选点等待","同向复探","端点确认","回退记录","退让卸载","阈值复核"][linked.states[motor]?.pair_phase??0]??"找零中"):"已停止"}
+        </Badge>)}
+        <span className="tiny muted">{linked.note}</span>
+      </div>}
       <div className="grid homing-control-grid" style={{gap:14}}>
         <div className="homing-operation compact-homing" style={{gap:12}}>
-          <Field label="找零方向" hint="双端或单端调试"><SelectField value={direction} onChange={v => { setDirection(Number(v)); }} disabled={busy || !!s?.motion_active} options={[
-            { value: 0, label: "双端找零：负端 → 正端" }, { value: -1, label: "负向单端调试" }, { value: 1, label: "正向单端调试" }]} /></Field>
+          <Field label="找零方向" hint="双端或单端调试"><SelectField value={direction} onChange={v => { setDirection(Number(v)); }} disabled={busy || linked.busy || !!s?.motion_active} options={[
+            { value: 0, label: "双端找零：负端 → 正端" }, { value: 2, label: "双端找零：先正端后负端" }, { value: -1, label: "负向单端调试" }, { value: 1, label: "正向单端调试" }]} /></Field>
           <div className="row-wrap">
-            <Button variant="primary" icon={<Icon.Target width={14} height={14}/>} disabled={busy || !s?.permit || !s.align_valid || !s.config_verified || s.drive === 1 || s.motion_active} onClick={() => void start()}>开始找零</Button>
-            <Button variant="ghost" disabled={!s?.motion_active && !busy} onClick={() => void semanticMotion.close().catch(e => setNote(String(e)))}>取消找零</Button>
+            <Button variant="primary" icon={<Icon.Target width={14} height={14}/>} disabled={busy || linked.busy || (linkedEnabled&&!!linkedError) || !s || !s.align_valid || !!s.fault || s.drive === 1 || s.motion_active} onClick={() => void start()}>开始找零</Button>
+            <Button variant="ghost" disabled={!s?.motion_active && !busy && !linked.busy} onClick={() => void (linked.busy?linkedHoming.stop():semanticMotion.stop(app.motor,true)).catch(e => setNote(String(e)))}>取消找零</Button>
           </div>
           <div className="homing-message-slot" role="status" aria-live="polite">
             <div className="tiny muted">{s?.motion_owner===2 ? "主控正在找零，请观察实时位置、电流及端点状态" : s?.span_valid && s.config_verified && s.limits_valid ? "双端找零完成，供电保持；已恢复运行配置，可直接点动或定位" : s?.span_valid ? "双端接触已完成，正在恢复并验证运行配置" : ""}</div>
@@ -117,5 +246,6 @@ export default function SemanticHoming() {
         </div>
       </div>
     </Card>
+    </div>
   </SemanticControls></div></div>;
 }

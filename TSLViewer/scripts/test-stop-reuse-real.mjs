@@ -9,13 +9,13 @@ try{
  await h.command(9,{kind:'task_speed',velocity_raw:610840,mode:0});
  await h.wait(9,10000,r=>r.motor.drive===0);
  for(const percent of [55,45,50]){
-  await h.command(9,{kind:'permit',enabled:true,lease_ms:3000});
+
   await h.command(9,{kind:'drive_enable'});await h.wait(9,10000,r=>r.motor.drive===2);
   await h.command(9,{kind:'logical_move',position:String(Math.round(span*percent/100))});
   await new Promise(r=>setTimeout(r,120));
   await h.command(9,{kind:'stop',after:1});
   const r=await h.wait(9,15000,r=>!r.motor.motion_active);
-  assert.equal(r.motor.fault,0);assert(r.motor.permit&&r.motor.logic_power);
+  assert.equal(r.motor.fault,0);assert(r.motor.logic_power);
   assert(r.motor.align_valid&&r.motor.home_neg_valid&&r.motor.home_pos_valid&&r.motor.coordinate_valid);
   console.log('STOP_REUSABLE',percent,r.motor.drive,r.motor.velocity_raw);
   await h.command(9,{kind:'stop',after:2});await h.wait(9,15000,r=>r.motor.drive===0);

@@ -9,7 +9,7 @@ function module(invoke, hardware = true, open = async () => {}) {
   const exports = {};
   new Function('exports', 'require', js)(exports, name => {
     if (name === './api') return { invokeCommand: hardware ? invoke : () => Promise.reject(Error('Tauri unavailable')) };
-    if (name === './semantic-motion') return { semanticMotion: {ensureConfigurationSession: open} };
+    if (name === './semantic-motion') return { semanticMotion: {ensureConfigurationSession: open,configurationJob:fn=>fn(),configurationActivity:()=>{}} };
     if (name === '@tauri-apps/api/core') return { invoke };
     throw new Error(name);
   });
@@ -34,11 +34,11 @@ test('passive reads retry only explicit BUSY, serialize across pages, and do not
   assert.deepEqual(calls,[[1,1,0],[1,1,0],[1,6,106],[9,1,0],[9,6,106]]);
   assert.equal(result[0].data.length,128);assert.equal(result[1].data[0],9);
 });
-test('explicit write rejection is not replayed and uses configuration session', async () => {
+test('explicit write rejection is not replayed and does not open a control session', async () => {
   let opened=0,calls=0;
   const service=module(async()=>{calls++;return {phase:5,result:-7,flags:0};},true,async()=>{opened++;});
   await assert.rejects(service.storageJob(9,10),/-7/);
-  assert.equal(opened,1);assert.equal(calls,1);
+  assert.equal(opened,0);assert.equal(calls,1);
 });
 test('two chunks, one commit, immutable status polling and complete data', async () => {
   const calls=[];const data=Array.from({length:128},(_,i)=>i);
@@ -68,4 +68,14 @@ test('failed terminal and inconsistent fragments do not produce success', async 
   const service=module(async (_,{motor,request:q})=>({id:q.id,motor,operation:1,phase:4,result:0,
     generation:q.offset?2:1,hand_id:1,flags:1,offset:q.offset,data:Array(q.offset?22:106).fill(0)}));
   await assert.rejects(service.storageJob(9,1),/分片/);
+});
+test('accepted save survives one status timeout without replaying commit', async()=>{
+ const calls=[];let timeout=true;
+ const service=module(async(_,{motor,request:q})=>{
+  calls.push(q.operation);
+  if(q.operation===6&&q.offset===0&&timeout){timeout=false;throw Error('response timeout');}
+  return {id:q.id,motor,operation:8,phase:q.operation===2?1:q.operation===8?2:4,result:0,generation:1,hand_id:1,flags:0,offset:q.offset,data:Array(q.offset?22:106).fill(0)};
+ });
+ assert.equal((await service.storageJob(0,8,Array(128).fill(0))).data.length,128);
+ assert.deepEqual(calls,[2,2,8,6,6,6]);
 });

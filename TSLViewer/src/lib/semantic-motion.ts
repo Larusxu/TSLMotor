@@ -9,25 +9,24 @@ export class CommandRejected extends Error {
   }
 }
 class SessionLost extends Error {}
-/** A single owner shared by all motion controls. The MCU executes trajectories;
- * this service only renews authorization and the specific held-jog lease. */
+/** Shared transport client. Accepted MCU tasks survive page
+ * changes; only a held-jog task needs periodic renewal. */
 export class SemanticMotion {
   private boot = "0";
   private session = 0;
   private seq = 0;
   private motor = 0;
+  private observedMotor = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
   private pulseBusy = false;
   private chain: Promise<unknown> = Promise.resolve();
-  private permitWanted = false;
   private heldJog = false;
   private jogStopAfter = 1;
   private jogGeneration = 0;
   private motionEpoch = 0;
   private task = 0;
-  private pulseAt = 0;
+  private tasks = new Map<number,number>();
   private telemetryAt = 0;
-  private permitAt = 0;
   private jogAt = 0;
   private heldTask = 0;
   private observers = new Set<(r: SemanticReply, motor: number) => void>();
@@ -42,6 +41,9 @@ export class SemanticMotion {
   private errors = new Set<(error: string) => void>();
   subscribeErrors(fn: (error: string) => void) { this.errors.add(fn); return () => { this.errors.delete(fn); }; }
   owned() { return this.session !== 0; }
+  /** UI selection owns the status feed; addressing a different lane must not
+   * starve the selected motor's toolbar or make its power state look unknown. */
+  observeMotor(motor: number) { this.observedMotor = motor; }
   /** Configuration shares the existing owner without selecting another motor. */
   ensureConfigurationSession() { return this.open(this.motor || 1); }
   /** Controller status within the current motor session, without switching it. */
@@ -54,42 +56,50 @@ export class SemanticMotion {
   }
   private async call(motor: number, command: MotorCommand): Promise<SemanticReply> {
     const id = ++this.seq;
-    const detailed = !["get_state","position_state","pulse","jog_renew","permit"].includes(command.kind);
+    const detailed = !["get_state","position_state","pulse","jog_renew"].includes(command.kind);
     const context = `M${motor} ${command.kind} request=${id} boot=${this.boot} session=${this.session} task=${this.task}`;
     if (detailed) this.log("info", `${context} 发送 ${JSON.stringify(command)}`);
     try {
     const sentAt = Date.now();
     const r = await invokeCommand<SemanticReply>("motor_semantic", { motor, request: {
-      request_id: id, boot_id: this.boot, session_id: this.session, task_id: this.task, command,
+      request_id: id, boot_id: this.boot, session_id: this.session, task_id: this.tasks.get(motor) ?? 0, command,
     } });
     if (command.kind === "position_state" && r.result === 14 && r.request_id === id &&
         (this.boot === "0" || r.boot_id === this.boot)) return this.call(motor, {kind:"get_state"});
     if (r.request_id !== id || r.protocol_version !== 2 || r.replayed)
       throw Error("主控响应身份未确认，等待下一次状态读取");
-    if (this.boot !== "0" && r.boot_id !== this.boot) throw new SessionLost("主控已重启，请重新确认状态和运动授权");
+    if (this.boot !== "0" && r.boot_id !== this.boot) throw new SessionLost("主控已重启，请重新确认状态");
     // A stale jog task is not a stale control session (e.g. endpoint hold).
-    if (command.kind !== "close" && this.session && r.session_id !== this.session) throw new SessionLost("主控会话已结束，请重新开启运动授权");
+    if (command.kind !== "close" && this.session && r.session_id !== this.session) throw new SessionLost("主控会话已结束，请重新连接主控");
     if (r.result) {
       this.observers.forEach(fn => fn(r, motor));
       if (r.result === 15) { this.heldJog = false; throw Error("到达行程限位"); }
       throw new CommandRejected(r);
     }
-    if (command.kind === "pulse" || command.kind === "open") this.pulseAt = sentAt;
-    if (command.kind === "permit" && command.enabled) this.permitAt = sentAt;
     if (command.kind === "jog_start" || command.kind === "velocity_start" || command.kind === "open_loop_start" || command.kind === "jog_renew") this.jogAt = sentAt;
-    if (motor) this.task = r.task_id;
+    if (motor) { this.tasks.set(motor,r.task_id); if(motor===this.motor)this.task=r.task_id; }
     if (detailed) this.log("ok", `${context} ${r.result_name}(${r.result}) ${Date.now()-sentAt}ms pending=${r.pending} drive=${r.motor?.drive ?? "-"} fault=${r.motor?.fault ?? "-"} error=${r.motor?.last_error ?? "-"}`);
     this.observers.forEach(fn => fn(r, motor));
     return r;
-    } catch (error) { if(error instanceof SessionLost)throw error;this.log(String(error).includes("到达行程限位")?"warn":"error", `${context} ${String(error)}`); if(!String(error).includes("到达行程限位"))this.errors.forEach(fn => fn(String(error))); throw error; }
+    } catch (error) {
+      if(error instanceof SessionLost)throw error;
+      const notice=(error instanceof CommandRejected&&[1,6,15].includes(error.reply.result))||String(error).includes("到达行程限位");
+      this.log(notice?"warn":"error", `${context} ${String(error)}`);
+      if(!notice)this.errors.forEach(fn => fn(String(error)));
+      throw error; // Rejection is still not a successfully accepted command.
+    }
   }
   async open(motor: number) {
     return this.queue(async () => {
       if (this.session) {
-        if (this.motor !== motor) throw Error("请先关闭当前电机控制会话再切换电机");
+        if (this.motor !== motor) {
+          // A held button cannot continue renewing after motor selection changes.
+          if(this.heldJog)await this.call(this.motor,{kind:"stop",after:this.jogStopAfter});
+          this.heldJog=false;this.motor=motor;this.task=this.tasks.get(motor)??0;
+        }
         return;
       }
-      this.boot = "0"; this.prepared=null;
+      this.boot = "0"; this.prepared=null;this.tasks.clear();
       const d = await this.call(0, { kind: "get_state" });
       if (!d.device || d.device.capabilities !== 3) throw Error("主控不支持生产执行器");
       this.boot = d.boot_id; this.seq = Math.max(this.seq, d.device.request_floor);
@@ -106,15 +116,7 @@ export class SemanticMotion {
     try {
       await this.queue(async () => {
         if (!this.session) return;
-        // Do not silently resurrect expired leases after a long blocked call.
-        if (Date.now() - this.pulseAt >= 1500) throw new SessionLost("控制会话续期超时，请重新确认运动授权");
-        await this.call(0, { kind: "pulse" });
-        if (this.permitWanted && Date.now() - this.permitAt >= 1200) {
-          this.permitWanted = this.heldJog = false;
-          await this.call(this.motor, { kind: "permit", enabled: false, lease_ms: 0 });
-          this.errors.forEach(fn => fn("运动授权续期超时，已停止；请重新授权"));
-        }
-        if (this.permitWanted) await this.call(this.motor, { kind: "permit", enabled: true, lease_ms: 1500 });
+        // Only held motion needs renewal.
         // Renew before optional telemetry; a failed read must not starve a held jog.
         if (this.heldJog) {
           if (Date.now() - this.jogAt >= 550) {
@@ -129,33 +131,34 @@ export class SemanticMotion {
             }
           }
         }
-        const state = await this.call(this.motor, { kind: "position_state" });
+        const observedMotor = this.observedMotor || this.motor;
+        const state = await this.call(observedMotor, { kind: "position_state" });
         // Read the MCU cache after lease renewal. This does not access TMC UART
-        // and optional display failures must not revoke the motion permit.
+        // and optional display failures must not stop an accepted task.
         if (!acquisitionLane.busy() && Date.now() - this.telemetryAt >= 500) {
           this.telemetryAt = Date.now();
           try {
             const id = ++this.seq;
-            const telemetry = await readTelemetry(this.motor, id);
+            const telemetry = await readTelemetry(observedMotor, id);
             if (telemetry.result === 0 && telemetry.protocol_version === 2 && telemetry.operation === 1 &&
                 telemetry.request_id === id && !telemetry.replayed && telemetry.boot_id === state.boot_id &&
-                telemetry.session_id === state.session_id && telemetry.task_id === state.task_id && telemetry.telemetry)
-              this.observers.forEach(fn => fn(telemetry, this.motor));
+                telemetry.task_id === state.task_id && telemetry.telemetry)
+              this.observers.forEach(fn => fn(telemetry, observedMotor));
           } catch { /* A display read is independent of the command/lease result. */ }
         }
-        if (state.motor?.fault || !state.motor?.permit) this.permitWanted = this.heldJog = false;
-        if (this.heldJog && (state.task_id !== this.heldTask ||
+        if (observedMotor === this.motor && (state.motor?.fault)) this.heldJog = false;
+        if (observedMotor === this.motor && this.heldJog && (state.task_id !== this.heldTask ||
             (state.motor?.motion_owner !== 3 && !state.pending))) this.heldJog = false;
       });
     } catch (error) {
       if (error instanceof SessionLost ||
           (error instanceof CommandRejected && error.reply.result === 7)) {
-        ++this.motionEpoch; ++this.jogGeneration; this.heldJog = this.permitWanted = false;
+        ++this.motionEpoch; ++this.jogGeneration; this.heldJog = false;
         if (this.timer) clearInterval(this.timer); this.timer = null;
         this.session = 0; this.boot = "0"; this.motor = this.task = 0; this.prepared = null;
         this.errors.forEach(fn => fn(String(error)));
       } else if (error instanceof CommandRejected) {
-        this.heldJog = this.permitWanted = false;
+        this.heldJog = false;
       }
       // One transport/read failure preserves the session. Only bounded lease
       // renewals are retried on the next tick; motion commands are never replayed.
@@ -167,7 +170,11 @@ export class SemanticMotion {
     if(!current())throw Error("运动请求已取消");
     await this.open(motor);
     if (["jog_start","velocity_start","logical_move","logical_work","move","work"].includes(cmd.kind)) {
-      let state=await this.waitForStop(motor,epoch);
+      // Absolute target streaming concerns this lane only. A peer's stop
+      // must not block it through the legacy device-wide stopping snapshot.
+      const state=cmd.kind==="logical_move"||cmd.kind==="move"
+        ?await this.queue(()=>this.call(motor,{kind:"get_state"}))
+        :await this.waitForStop(motor,epoch);
       if(epoch!==this.motionEpoch)throw Error("运动准备已取消");
       if(!current())throw Error("运动请求已取消");
       if(state.motor?.drive===0)await this.enable(motor);
@@ -182,18 +189,12 @@ export class SemanticMotion {
     }catch(error){
       // Reconnect observations after a reboot; never replay a motion/write.
       if(!(error instanceof SessionLost)||!["get_state","position_state","encoder_state","ident_state"].includes(cmd.kind))throw error;
-      ++this.motionEpoch;++this.jogGeneration;this.heldJog=this.permitWanted=false;
+      ++this.motionEpoch;++this.jogGeneration;this.heldJog=false;
       if(this.timer)clearInterval(this.timer);this.timer=null;
       this.session=0;this.boot="0";this.motor=this.task=0;this.prepared=null;
       await this.open(motor);
       return this.queue(()=>this.call(motor,cmd));
     }
-  }
-  async permit(motor: number, enabled: boolean) {
-    this.permitWanted = false;
-    if(enabled){const state=await this.command(motor,{kind:"get_state"});if(!state.motor?.config_verified)await this.initialize(motor);}
-    const r = await this.command(motor, { kind: "permit", enabled, lease_ms: enabled ? 1500 : 0 });
-    this.permitWanted = enabled && !!r.motor?.permit; return r;
   }
   async initialize(motor: number) {
     const current=await this.command(motor,{kind:"get_state"});
@@ -204,14 +205,13 @@ export class SemanticMotion {
   async powerOff(motor:number){
     await this.stop(motor,true);
     await this.wait(motor,15000,r=>r.motor?.drive===0&&!r.motor.motion_active);
-    await this.permit(motor,false);
     await invokeCommand<number[]>("main_control",{motor,op:5,data:[0]});
     const actual=await invokeCommand<number[]>("main_control",{motor,op:4,data:[]});
     if(actual.length!==10||!actual[7]||actual[2]<1||actual[2]>4||(actual[9]&(1<<(actual[2]-1))))throw Error("逻辑电源关闭尚未确认");
     await this.close();
   }
   async clearFault(motor:number) {
-    this.permitWanted=this.heldJog=false;
+    this.heldJog=false;
     await this.command(motor,{kind:"clear_fault"});
     const end=Date.now()+20000;
     for(;;) {
@@ -220,7 +220,7 @@ export class SemanticMotion {
       // The old latch remains visible until the MCU completes OFF/readback.
       if(!r.pending&&r.motor?.drive!==1&&!r.motor?.pending_action) {
         if(r.motor?.fault||r.motor?.last_error)throw Error(`故障恢复失败 fault=${r.motor?.fault}, error=${r.motor?.last_error}`);
-        this.report("ok",`M${motor} 故障已清除，PWM禁能；请重新确认运动授权`);return r;
+        this.report("ok",`M${motor} 故障已清除，PWM禁能；可按需重新使能`);return r;
       }
       if(Date.now()>=end)throw Error("故障恢复超时，未自动使能或重试");
     }
@@ -230,27 +230,22 @@ export class SemanticMotion {
     for (;;) {
       await new Promise(resolve => setTimeout(resolve, 100));
       const r = await this.command(motor, { kind: "get_state" });
-      if (r.motor?.fault || (r.motor?.last_error && r.motor.last_error!==15 && !completedResults.includes(r.motor.last_error))) throw Error(`M${motor} 主控任务失败 fault=${r.motor.fault}, error=${r.motor.last_error}${r.motor.last_error===13 ? "（设备读写失败，请确认电机编号、连接和供电）" : ""}`);
+      if (r.motor?.fault || (r.motor?.last_error && ![1,6,15].includes(r.motor.last_error) && !completedResults.includes(r.motor.last_error))) throw Error(`M${motor} 主控任务失败 fault=${r.motor.fault}, error=${r.motor.last_error}${r.motor.last_error===13 ? "（设备读写失败，请确认电机编号、连接和供电）" : ""}`);
       if (!r.pending && r.motor?.drive !== 1 && !r.motor?.pending_action && accept(r)) return r;
       if (Date.now() >= end) throw Error("主控任务等待超时；未自动重发，请读取当前状态");
     }
   }
-  /** Pending action may be zero while firmware is measuring its stop window.
-   * Query the device stopping flag; never replay a rejected motion command. */
+  /** Wait only for this lane's outstanding transaction/stop completion. */
   private async waitForStop(motor:number,epoch:number) {
-    const end=Date.now()+10000;let announced=false;
+    const end=Date.now()+10000;
     for(;;){
       if(epoch!==this.motionEpoch)throw Error("运动准备已取消");
-      const device=await this.queue(()=>this.call(0,{kind:"get_state"}));
-      if(!device.device)throw Error("主控停止状态未确认");
-      if(!device.device.stopping){
-        const state=await this.queue(()=>this.call(motor,{kind:"get_state"}));
-        if(epoch!==this.motionEpoch)throw Error("运动准备已取消");
-        return state;
-      }
-      if(!announced){this.report("info",`M${motor} 等待上一次停止/位置保持完成；尚未发送新运动`);announced=true;}
-      if(Date.now()>=end)throw Error("主控停止/位置保持尚未完成，请检查当前状态；未发送新运动");
-      await new Promise(resolve=>setTimeout(resolve,100));
+      const state=await this.queue(()=>this.call(motor,{kind:"get_state"}));
+      if(epoch!==this.motionEpoch)throw Error("运动准备已取消");
+      if(!state.pending&&!state.motor?.pending_action)return state;
+      if(state.motor?.fault)throw Error(`M${motor} 当前故障=${state.motor.fault}`);
+      if(Date.now()>=end)throw Error(`M${motor} 当前操作尚未完成`);
+      await new Promise(resolve=>setTimeout(resolve,50));
     }
   }
   /** RTMI channel changes require gate OFF in the current firmware. Finish an
@@ -351,11 +346,11 @@ export class SemanticMotion {
     return this.command(motor, { kind: "stop", after: disable ? 2 : 1 });
   }
   async emergency(motor: number) {
-    ++this.motionEpoch; ++this.jogGeneration; this.heldJog = this.permitWanted = false;
+    ++this.motionEpoch; ++this.jogGeneration; this.heldJog = false;
     return this.command(motor, { kind: "e_stop" });
   }
   async close() {
-    ++this.motionEpoch; ++this.jogGeneration; this.heldJog = this.permitWanted = false;
+    ++this.motionEpoch; ++this.jogGeneration; this.heldJog = false;
     if (this.timer) clearInterval(this.timer); this.timer = null;
     return this.queue(async () => {
       try { if (this.session) await this.call(0, { kind: "close" }); }
